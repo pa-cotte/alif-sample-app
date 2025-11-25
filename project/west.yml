@@ -21,6 +21,7 @@ manifest:
           - hal_alif   
           - hal_ethos_u
           - tflite-micro
+          - hal_st
 
     - name: mcuboot_alif
       remote: alif
