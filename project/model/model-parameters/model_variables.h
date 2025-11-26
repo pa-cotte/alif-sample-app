@@ -145,7 +145,7 @@ const ei_impulse_t impulse_833783_2 = {
     .project_name = "Test_accelero",
     .impulse_id = 2,
     .impulse_name = "Impulse #2",
-    .deploy_version = 6,
+    .deploy_version = 7,
 
     .nn_input_frame_size = 207,
     .raw_sample_count = 100,

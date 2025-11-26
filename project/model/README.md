@@ -1,6 +1,6 @@
 # Edge Impulse model for Zephyr
 Model package name: Test_accelero
-Model version: 6
+Model version: 7
 Edge Impulse SDK version: v1.79.0
 
 ## Instructions

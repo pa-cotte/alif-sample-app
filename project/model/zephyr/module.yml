@@ -1,4 +1,4 @@
-name: Test_accelero v6
+name: Test_accelero v7
 build:
   cmake: .
   depends:
