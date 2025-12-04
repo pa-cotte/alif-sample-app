@@ -46,7 +46,7 @@
 #include "edge-impulse-sdk/classifier/inferencing_engines/engines.h"
 #include "edge-impulse-sdk/classifier/postprocessing/ei_postprocessing_common.h"
 
-const char* ei_classifier_inferencing_categories_833783_2[] = { "idle", "shake", "turn" };
+const char* ei_classifier_inferencing_categories_833783_2[] = { "idle", "idle_back", "idle_bottom", "idle_front", "idle_left", "idle_right", "shake", "turn", "up" };
 
 EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_833783_3_axes[] = { 0, 1, 2 };
 const uint32_t ei_dsp_config_833783_3_axes_size = 3;
@@ -60,7 +60,7 @@ ei_dsp_config_spectral_analysis_t ei_dsp_config_833783_3 = {
     3.0f, // float filter-cutoff
     6, // int filter-order
     "FFT", // select analysis-type
-    128, // int fft-length
+    256, // int fft-length
     3, // int spectral-peaks-count
     0.1f, // float spectral-peaks-threshold
     "0.1, 0.5, 1.0, 2.0, 5.0", // string spectral-power-edges
@@ -71,15 +71,35 @@ ei_dsp_config_spectral_analysis_t ei_dsp_config_833783_3 = {
     false // boolean extra-low-freq
 };
 
-const uint8_t ei_dsp_blocks_833783_2_size = 1;
+EI_CLASSIFIER_DSP_AXES_INDEX_TYPE ei_dsp_config_833783_7_axes[] = { 0, 1, 2 };
+const uint32_t ei_dsp_config_833783_7_axes_size = 3;
+ei_dsp_config_raw_t ei_dsp_config_833783_7 = {
+    7, // uint32_t blockId
+    1, // int implementationVersion
+    3, // int length of axes
+    1.0f // float scale-axes
+};
+
+const uint8_t ei_dsp_blocks_833783_2_size = 2;
 ei_model_dsp_t ei_dsp_blocks_833783_2[ei_dsp_blocks_833783_2_size] = {
     { // DSP block 3
         3,
-        207, // output size
+        399, // output size
         &extract_spectral_analysis_features, // DSP function pointer
         (void*)&ei_dsp_config_833783_3, // pointer to config struct
         ei_dsp_config_833783_3_axes, // array of offsets into the input stream, one for each axis
         ei_dsp_config_833783_3_axes_size, // number of axes
+        1, // version
+        nullptr, // factory function
+        nullptr, // data normalization config
+    },
+    { // DSP block 7
+        7,
+        720, // output size
+        &extract_raw_features, // DSP function pointer
+        (void*)&ei_dsp_config_833783_7, // pointer to config struct
+        ei_dsp_config_833783_7_axes, // array of offsets into the input stream, one for each axis
+        ei_dsp_config_833783_7_axes_size, // number of axes
         1, // version
         nullptr, // factory function
         nullptr, // data normalization config
@@ -108,8 +128,8 @@ ei_learning_block_config_tflite_graph_t ei_learning_block_config_833783_4 = {
 };
 
 const uint8_t ei_learning_blocks_833783_2_size = 1;
-const uint32_t ei_learning_block_833783_4_inputs[1] = { 3 };
-const uint8_t ei_learning_block_833783_4_inputs_size = 1;
+const uint32_t ei_learning_block_833783_4_inputs[2] = { 3,7 };
+const uint8_t ei_learning_block_833783_4_inputs_size = 2;
 const ei_learning_block_t ei_learning_blocks_833783_2[ei_learning_blocks_833783_2_size] = {
     {
         4,
@@ -145,17 +165,17 @@ const ei_impulse_t impulse_833783_2 = {
     .project_name = "Test_accelero",
     .impulse_id = 2,
     .impulse_name = "Impulse #2",
-    .deploy_version = 7,
+    .deploy_version = 13,
 
-    .nn_input_frame_size = 207,
-    .raw_sample_count = 100,
+    .nn_input_frame_size = 1119,
+    .raw_sample_count = 240,
     .raw_samples_per_frame = 3,
-    .dsp_input_frame_size = 100 * 3,
+    .dsp_input_frame_size = 240 * 3,
     .input_width = 0,
     .input_height = 0,
     .input_frames = 0,
-    .interval_ms = 10,
-    .frequency = 100,
+    .interval_ms = 5,
+    .frequency = 200,
 
     .dsp_blocks_size = ei_dsp_blocks_833783_2_size,
     .dsp_blocks = ei_dsp_blocks_833783_2,
@@ -172,11 +192,11 @@ const ei_impulse_t impulse_833783_2 = {
 
     .sensor = EI_CLASSIFIER_SENSOR_FUSION,
     .fusion_string = "ax + ay + az",
-    .slice_size = (100/4),
+    .slice_size = (240/4),
     .slices_per_model_window = 4,
 
     .has_anomaly = EI_ANOMALY_TYPE_UNKNOWN,
-    .label_count = 3,
+    .label_count = 9,
     .categories = ei_classifier_inferencing_categories_833783_2,
     .results_type = EI_CLASSIFIER_TYPE_CLASSIFICATION,
     .freeform_outputs_size = freeform_outputs_833783_2_size,

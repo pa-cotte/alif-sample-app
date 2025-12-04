@@ -6,14 +6,14 @@
 
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
 
-// LED (facultatif, pour voir que ça tourne)
+// LED
 #define RED_LED_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(RED_LED_NODE, gpios);
 
 // Accéléromètre
 static const struct device *sensor = DEVICE_DT_GET(DT_NODELABEL(lis2dux12_body));
 
-// Buffer brut : 100 échantillons * 3 axes = 300 valeurs
+// Buffer : 100 échantillons * 3 axes = 300 valeurs
 static float features[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = {0};
 static size_t feat_index = 0;
 
@@ -25,18 +25,17 @@ static int get_feature_callback(size_t offset, size_t length, float *out_ptr)
   return 0;
 }
 
-// On met le résultat en global pour ne pas le mettre sur la pile
 static ei_impulse_result_t g_result;
 
 auto main() -> int
 {
 
-  printf("Starting EI realtime classifier...\n");
+  // printf("Starting EI realtime classifier...\n");
 
   // --- Vérif capteur ---
   if (!device_is_ready(sensor))
   {
-    printf("Accelerometer NOT READY\n");
+    // printf("Accelerometer NOT READY\n");
     return 0;
   }
 
@@ -47,7 +46,7 @@ auto main() -> int
   }
 
   // Une prédiction = 100 échantillons @100 Hz -> 1 seconde de données
-  const size_t frame_size = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE; // 300
+  const size_t frame_size = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
 
   while (true)
   {
@@ -59,7 +58,7 @@ auto main() -> int
 
     if (rc != 0)
     {
-      printf("sensor_sample_fetch_chan error: %d\n", rc);
+      // printf("sensor_sample_fetch_chan error: %d\n", rc);
       k_msleep(10);
       continue;
     }
@@ -68,7 +67,7 @@ auto main() -> int
 
     if (rc != 0)
     {
-      printf("sensor_channel_get error: %d\n", rc);
+      // printf("sensor_channel_get error: %d\n", rc);
       k_msleep(10);
       continue;
     }
@@ -96,17 +95,23 @@ auto main() -> int
       signal.get_data = get_feature_callback;
 
       // Lancer le modèle
+      // EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, false);
+
+      // uint64_t start = k_uptime_get();
       EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, false);
+      // uint64_t end = k_uptime_get();
+
+      // printf("Inference time: %llu ms\n", end - start);
 
       if (ei_status != EI_IMPULSE_OK)
       {
-        printf("EI classifier error: %d\n", ei_status);
+        // printf("EI classifier error: %d\n", ei_status);
       }
       else
       {
+
         printf("\n=== PREDICTION ===\n");
 
-        // Affichage brut
         for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
         {
           printf("%s : %.3f\n",
@@ -128,11 +133,14 @@ auto main() -> int
         }
 
         printf("**Detected state : %s  \n", best_label, best_value);
+        // ei_printf("Arena size: %d bytes\n", EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE);
       }
     }
 
     // Attendre 10 ms pour respecter 100 Hz
     k_msleep(EI_CLASSIFIER_INTERVAL_MS);
+
+    // k_msleep(5); // 200 Hz
   }
 
   return 0;
