@@ -1,40 +1,155 @@
+
 #include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/gpio.h>
+#include <stdio.h>
 
+#include "model/edge-impulse-sdk/classifier/ei_run_classifier.h"
+
+// LED
 #define GREEN_LED_NODE DT_ALIAS(led0)
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(RED_LEGREEN_LED_NODED_NODE, gpios);
 
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(GREEN_LED_NODE, gpios);
+// Accéléromètre
+static const struct device *sensor = DEVICE_DT_GET(DT_NODELABEL(lis2dux12_body));
 
-LOG_MODULE_REGISTER(app);
+// Buffer : 100 échantillons * 3 axes = 300 valeurs
+static float features[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = {0};
+static size_t feat_index = 0;
+
+// Callback utilisé par Edge Impulse pour lire les données
+
+static int get_feature_callback(size_t offset, size_t length, float *out_ptr)
+{
+  static uint32_t n = 0;
+  if ((n++ % 50) == 0)
+  {
+    printf("[cb] off=%u len=%u\n", (unsigned)offset, (unsigned)length);
+  }
+
+  memcpy(out_ptr, features + offset, length * sizeof(float));
+  return 0;
+}
+
+static ei_impulse_result_t g_result;
 
 auto main() -> int
 {
-  int ret;
 
-  if (!gpio_is_ready_dt(&led))
+  // printf("Starting EI realtime classifier...\n");
+
+  // --- Vérif capteur ---
+  if (!device_is_ready(sensor))
   {
-    LOG_ERR("Led not ready\n");
+    // printf("Accelerometer NOT READY\n");
     return 0;
   }
 
-  ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
-  if (ret < 0)
+  // --- LED ---
+  if (gpio_is_ready_dt(&led))
   {
-    LOG_ERR("Led config failed\n");
-    return 0;
+    gpio_pin_configure_dt(&led, GPIO_OUTPUT);
   }
+
+  // Une prédiction = 100 échantillons @100 Hz -> 1 seconde de données
+  const size_t frame_size = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
 
   while (true)
   {
-    LOG_INF("Blink from HE!");
-    ret = gpio_pin_toggle_dt(&led);
-    if (ret < 0)
+
+    gpio_pin_toggle_dt(&led);
+
+    struct sensor_value accel[3];
+    int rc = sensor_sample_fetch_chan(sensor, SENSOR_CHAN_ACCEL_XYZ);
+
+    if (rc != 0)
     {
-      LOG_ERR("Led toggle failed");
-      return 0;
+      // printf("sensor_sample_fetch_chan error: %d\n", rc);
+      k_msleep(10);
+      continue;
     }
 
-    k_msleep(500);
+    rc = sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_XYZ, accel);
+
+    if (rc != 0)
+    {
+      // printf("sensor_channel_get error: %d\n", rc);
+      k_msleep(10);
+      continue;
+    }
+
+    float ax = sensor_value_to_double(&accel[0]);
+    float ay = sensor_value_to_double(&accel[1]);
+    float az = sensor_value_to_double(&accel[2]);
+
+    // printf("%.3f,%.3f,%.3f\n", ax, ay, az);
+
+    features[feat_index++] = ax;
+    features[feat_index++] = ay;
+    features[feat_index++] = az;
+
+    // Quand la fenêtre est pleine, on lance le modèle
+    if (feat_index >= frame_size)
+    {
+
+      // On repars au début pour la prochaine fenêtre
+      feat_index = 0;
+
+      // Création du signal attendu par EI
+      signal_t signal;
+      signal.total_length = frame_size;
+      signal.get_data = get_feature_callback;
+
+      // Lancer le modèle
+      // EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, false);
+
+      // uint64_t start = k_uptime_get();
+      // ei_printf("Running inference...\n");
+      EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, true);
+
+      // uint64_t end = k_uptime_get();
+
+      // printf("Inference time: %llu ms\n", end - start);
+
+      if (ei_status != EI_IMPULSE_OK)
+      {
+        // printf("EI classifier error: %d\n", ei_status);
+      }
+      else
+      {
+
+        printf("\n=== PREDICTION ===\n");
+
+        for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
+        {
+          printf("%s : %.3f\n",
+                 g_result.classification[i].label,
+                 g_result.classification[i].value);
+        }
+
+        // === Trouver la classe dominante ===
+        float best_value = -1.0f;
+        const char *best_label = "unknown";
+
+        for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
+        {
+          if (g_result.classification[i].value > best_value)
+          {
+            best_value = g_result.classification[i].value;
+            best_label = g_result.classification[i].label;
+          }
+        }
+
+        printf("**Detected state : %s  \n", best_label, best_value);
+        // ei_printf("Arena size: %d bytes\n", EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE);
+      }
+    }
+
+    // Attendre 10 ms pour respecter 100 Hz
+    k_msleep(EI_CLASSIFIER_INTERVAL_MS);
+    //  k_msleep(5); // 200 Hz
   }
+
+  return 0;
 }
