@@ -1,5 +1,0 @@
-name: Test_accelero v13
-build:
-  cmake: .
-  depends:
-    - edge-impulse-sdk-zephyr

@@ -8,6 +8,7 @@ manifest:
     - name: pacotte
       url-base: https://github.com/pa-cotte
 
+      
   projects:
     - name: zephyr
       remote: alif
@@ -19,9 +20,31 @@ manifest:
           - liblc3
           - mbedtls
           - hal_alif   
-          - hal_ethos_u
           - tflite-micro
           - hal_st
+          - cmsis-dsp
+          - cmsis-nn
+          - canopennode
+          - chre
+          - edtt
+          - fatfs
+          - hal_ethos_u
+          - libmetal
+          - littlefs
+          - lvgl
+          - lz4
+          - mipi-sys-t
+          - nanopb
+          - net-tools
+          - openthread
+          - picolibc
+          - psa-arch-tests
+          - tinycrypt
+          - tf-m-tests
+          - TraceRecorderSource
+          - uoscore-uedhoc
+          - zcbor
+          - zscilib
 
     - name: mcuboot_alif
       remote: alif
@@ -35,13 +58,8 @@ manifest:
       path: modules/hal/cmsis
       groups:
          - hal
-         
-    - name: edge-impulse-sdk-zephyr
-      description: Edge Impulse SDK for Zephyr
-      path: modules/edge-impulse-sdk-zephyr
-      revision: v1.79.0
-      url: https://github.com/edgeimpulse/edge-impulse-sdk-zephyr
-       
+
   self:
     path: alif
     west-commands: scripts/west-commands.yml
+
