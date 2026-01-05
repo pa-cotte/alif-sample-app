@@ -1,10 +1,18 @@
+#include <zephyr/types.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/cache.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/gpio.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include "npu_handler.h"
+
+#include <cmsis_compiler.h>
 
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
+
+#include <ethosu_driver.h>
 
 // LED
 #define RED_LED_NODE DT_ALIAS(led0)
@@ -13,12 +21,11 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(RED_LED_NODE, gpios);
 // Accéléromètre
 static const struct device *sensor = DEVICE_DT_GET(DT_NODELABEL(lis2dux12_body));
 
-// Buffer : 100 échantillons * 3 axes = 300 valeurs
-static float features[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = {0};
+// Buffer de données aligné
+__aligned(16) static float features[EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE] = {0};
 static size_t feat_index = 0;
 
-// Callback utilisé par Edge Impulse pour lire les données
-
+// Callback pour Edge Impulse
 static int get_feature_callback(size_t offset, size_t length, float *out_ptr)
 {
   memcpy(out_ptr, features + offset, length * sizeof(float));
@@ -30,93 +37,90 @@ static ei_impulse_result_t g_result;
 auto main() -> int
 {
 
-  // printf("Starting EI realtime classifier...\n");
+  printk("=== ATTEMPTING INFERENCE ===\n");
 
-  // --- Vérif capteur ---
+  printf("Starting EI realtime classifier ...\n");
+
   if (!device_is_ready(sensor))
   {
-    // printf("Accelerometer NOT READY\n");
+    printf("Accelerometer NOT READY\n");
     return 0;
   }
+  else
+  {
+    printf("Accelerometer is ready\n");
+  }
 
-  // --- LED ---
   if (gpio_is_ready_dt(&led))
   {
     gpio_pin_configure_dt(&led, GPIO_OUTPUT);
   }
 
-  // Une prédiction = 100 échantillons @100 Hz -> 1 seconde de données
+  const struct device *ethosu = DEVICE_DT_GET(DT_NODELABEL(ethosu0));
+  if (!device_is_ready(ethosu))
+  {
+    printf("Ethos-U device not ready\n");
+  }
+  else
+  {
+    printf("Ethos-U device is ready\n");
+  }
+
   const size_t frame_size = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
+
+  // Test malloc
+
+  // void *p = malloc(16);
+  // printf("features %p size=%zu\n", (void *)features, sizeof(features));
+  // printf("malloc ptr=%p\n", p);
+
+  // int ret = npu_init();
+  // if (ret != 0)
+  // {
+  //   printk("Erreur: Impossible d'initialiser le NPU\n");
+  //   return ret;
+  // }
+  // printk("NPU initialisé avec succès !\n");
 
   while (true)
   {
-
     gpio_pin_toggle_dt(&led);
 
     struct sensor_value accel[3];
-    int rc = sensor_sample_fetch_chan(sensor, SENSOR_CHAN_ACCEL_XYZ);
+    sensor_sample_fetch_chan(sensor, SENSOR_CHAN_ACCEL_XYZ);
+    sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_XYZ, accel);
 
-    if (rc != 0)
-    {
-      // printf("sensor_sample_fetch_chan error: %d\n", rc);
-      k_msleep(10);
-      continue;
-    }
+    features[feat_index++] = sensor_value_to_double(&accel[0]);
+    features[feat_index++] = sensor_value_to_double(&accel[1]);
+    features[feat_index++] = sensor_value_to_double(&accel[2]);
 
-    rc = sensor_channel_get(sensor, SENSOR_CHAN_ACCEL_XYZ, accel);
-
-    if (rc != 0)
-    {
-      // printf("sensor_channel_get error: %d\n", rc);
-      k_msleep(10);
-      continue;
-    }
-
-    float ax = sensor_value_to_double(&accel[0]);
-    float ay = sensor_value_to_double(&accel[1]);
-    float az = sensor_value_to_double(&accel[2]);
-
-    // printf("%.3f,%.3f,%.3f\n", ax, ay, az);
-
-    features[feat_index++] = ax;
-    features[feat_index++] = ay;
-    features[feat_index++] = az;
-
-    // Quand la fenêtre est pleine, on lance le modèle
     if (feat_index >= frame_size)
     {
-
-      // On repars au début pour la prochaine fenêtre
       feat_index = 0;
 
-      // Création du signal attendu par EI
       signal_t signal;
       signal.total_length = frame_size;
       signal.get_data = get_feature_callback;
 
-      // Lancer le modèle
-      // EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, false);
+      sys_cache_data_flush_all();
 
-      // uint64_t start = k_uptime_get();
+      ei_printf("\n=== start inference ===\n");
+
       EI_IMPULSE_ERROR ei_status = run_classifier(&signal, &g_result, false);
-      // uint64_t end = k_uptime_get();
 
-      // printf("Inference time: %llu ms\n", end - start);
+      sys_cache_data_invd_all();
+      ei_printf("\n=== end inference ===\n");
 
       if (ei_status != EI_IMPULSE_OK)
       {
-        // printf("EI classifier error: %d\n", ei_status);
+        printf("EI classifier error: %d\n", ei_status);
       }
       else
       {
-
         printf("\n=== PREDICTION ===\n");
-
         for (size_t i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++)
         {
-          printf("%s : %.3f\n",
-                 g_result.classification[i].label,
-                 g_result.classification[i].value);
+          printf("%s : %.3f\n", g_result.classification[i].label, g_result.classification[i].value);
         }
 
         // === Trouver la classe dominante ===
@@ -132,16 +136,11 @@ auto main() -> int
           }
         }
 
-        printf("**Detected state : %s  \n", best_label, best_value);
-        // ei_printf("Arena size: %d bytes\n", EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE);
+        printf("**Detected state : %s (%.3f)\n", best_label, best_value);
+        ei_free(g_result.classification);
       }
     }
-
-    // Attendre 10 ms pour respecter 100 Hz
     k_msleep(EI_CLASSIFIER_INTERVAL_MS);
-
-    // k_msleep(5); // 200 Hz
   }
-
   return 0;
 }
