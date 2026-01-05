@@ -55,3 +55,29 @@
 		zephyr,memory-region = "ETH_DMA";
 	};
 };
+
+
+/* ---------------------------- */
+/*    NPU Ethos-U55 (RTSS-HE)   */
+/* ---------------------------- */
+
+ / {
+     reserved-memory {
+         ethos_u_memory: ethos-u-memory {
+             compatible = "shared-dma-pool";
+             reusable;
+             size = <0x00400000>; /* 4MB */
+             alignment = <0x1000>;
+         };
+     };
+ };
+
+ &soc {
+     ethos_u: ethos-u@48200000 {
+         compatible = "arm,ethos-u55";
+         reg = <0x48200000 0x10000>;
+         memory-region = <&ethos_u_memory>;
+         status = "okay";
+     };
+ };
+
