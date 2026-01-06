@@ -18,6 +18,8 @@
 #define RED_LED_NODE DT_ALIAS(led0)
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(RED_LED_NODE, gpios);
 
+static struct ethosu_driver ethosu_drv;
+
 // Accéléromètre
 static const struct device *sensor = DEVICE_DT_GET(DT_NODELABEL(lis2dux12_body));
 
@@ -137,7 +139,7 @@ auto main() -> int
         }
 
         printf("**Detected state : %s (%.3f)\n", best_label, best_value);
-        ei_free(g_result.classification);
+        // ei_free(g_result.classification);
       }
     }
     k_msleep(EI_CLASSIFIER_INTERVAL_MS);

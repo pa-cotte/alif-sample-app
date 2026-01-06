@@ -29,6 +29,4 @@
 
 &ethosu0 {
     status = "okay";
-    /delete-property/ secure-enable;
-    /delete-property/ privilege-enable;
 };
