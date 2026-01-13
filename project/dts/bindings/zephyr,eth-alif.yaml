@@ -1,0 +1,15 @@
+description: Native Alif E7 Ethernet Controller
+
+compatible: "zephyr,eth-alif"
+
+include:
+  - ethernet-controller.yaml
+  - pinctrl-device.yaml
+
+properties:
+  reg:
+    required: true
+
+  mac-address:
+    type: uint8-array
+    required: true

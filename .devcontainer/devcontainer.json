@@ -1,0 +1,58 @@
+{
+  "name": "Alif sample app",
+  "privileged": true,
+  "updateRemoteUserUID": true,
+  "containerUser": "user",
+  "remoteEnv": {
+    "NODE_TLS_REJECT_UNAUTHORIZED": "0",
+    "ZEPHYR_SDK_VERSION": "0.17.0"
+  },
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "ALIF_SE_TOOLS": "/opt/alif-se-tools/"
+    }
+  },
+  "containerEnv": {
+    "PROMPT_COMMAND": "history -a",
+    "ZEPHYR_BASE": "${containerWorkspaceFolder}/zephyr",
+    "ALIF_SE_TOOLS": "/opt/alif-se-tools/",
+    "ZEPHYR_SDK_VERSION": "0.17.0"
+  },
+  "runArgs": [
+    "--security-opt",
+    "label=disable",
+    "--network=host" // needed for display like JLinkConfig tools
+  ],
+  "mounts": [
+    "type=bind,source=/dev/bus/usb,target=/dev/bus/usb"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-azuretools.vscode-docker",
+        "mcu-debug.debug-tracker-vscode",
+        "augustocdias.tasks-shell-input",
+        "spencerwmiles.vscode-task-buttons",
+        "evilz.vscode-reveal",
+        "plorefice.devicetree",
+        "trond-snekvik.kconfig-lang",
+        "marus25.cortex-debug",
+        "cheshirekow.cmake-format",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "ms-vscode.vscode-serial-monitor"
+      ],
+      "settings": {
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash"
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

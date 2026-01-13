@@ -1,0 +1,13 @@
+.west/
+/bootloader/
+build/
+/modules/
+/zephyr/
+twister-out*/
+.gdb_history
+__pycache__
+.pytest_cache/
+openocd/
+nohup.out
+mcu/tools
+*.bin

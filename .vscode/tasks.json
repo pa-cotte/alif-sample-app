@@ -1,0 +1,242 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // Task triggered by "Buttons"
+        {
+            "label": "Initialize",
+            "type": "shell",
+            "command": "west init -l project",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "clear": true
+            },
+            "dependsOn": "Clean West",
+            "problemMatcher": []
+        },
+        {
+            "label": "Update",
+            "type": "shell",
+            "command": "west update",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Blobs",
+            "type": "shell",
+            "command": "west blobs fetch hal_infineon",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Configure",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "mkdir -p build && echo \"${input:coreConfiguration}\" > build/.config && echo \"Configuration set to: ${input:coreConfiguration}\""
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": [
+                "Clean",
+                "Erase MRAM"
+            ],
+            "presentation": {
+                "clear": true
+            },
+        },
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "CONFIG=$(cat build/.config 2>/dev/null) && case \"$CONFIG\" in he) echo Building HE only... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_he project/apps/he_app -d build/he;; hp) echo Building HP only... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_hp project/apps/hp_app -d build/hp;; he_hp) echo Building HE and HP... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_he project/apps/he_app -d build/he && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_hp project/apps/hp_app -d build/hp;; he_mcuboot) echo Building HE with MCUboot... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_he project/apps/he_app -d build/he --sysbuild;; hp_mcuboot) echo Building HP with MCUboot... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_hp project/apps/hp_app -d build/hp --sysbuild;; he_hp_mcuboot) echo Building HE and HP with MCUboot... && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_he project/apps/he_app -d build/he --sysbuild && west build -p auto -b alif_e7_dk/ae722f80f55d5xx/rtss_hp project/apps/hp_app -d build/hp --sysbuild;; *) echo Error: Unknown configuration && exit 1;; esac"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+        },
+        {
+            "label": "Flash",
+            "type": "shell",
+            "command": "sudo ./app-write-mram -p",
+            "group": "build",
+            "options": {
+                "cwd": "${env:ALIF_SE_TOOLS}"
+            },
+            "dependsOn": [
+                "[subtask] Gen TOC"
+            ]
+        },
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": [
+                "rm -rf build",
+                "sudo rm -rf ${ALIF_SE_TOOLS}/build/images/he_app.bin",
+                "sudo rm -rf ${ALIF_SE_TOOLS}/build/images/hp_app.bin"
+            ],
+            "group": "build",
+            "presentation": {
+                "clear": true
+            },
+        },
+        // Task triggered by "F1 -> run Task" 
+        {
+            "label": "Clean West",
+            "type": "shell",
+            "command": "rm -rf .west build modules zephyr bootloader",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run tests",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "(cd ${workspaceFolder}/project/apps/he_app/tests && west build -b native_sim --pristine && west build -t run) && (cd ${workspaceFolder}/project/apps/hp_app/tests && west build -b native_sim --pristine && west build -t run)"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Maintenance",
+            "type": "shell",
+            "command": "cd ${ALIF_SE_TOOLS} && sudo ${ALIF_SE_TOOLS}/maintenance",
+            "group": "test",
+        },
+        {
+            "label": "Erase MRAM",
+            "type": "shell",
+            "command": "cd ${ALIF_SE_TOOLS} && sudo ${ALIF_SE_TOOLS}/app-write-mram -e APP",
+            "group": "build",
+            "dependsOn": [
+                "tools-config"
+            ],
+        },
+        {
+            "label": "fetch HAL infineon blobs",
+            "type": "shell",
+            "command": "west blobs fetch hal_infineon",
+            "group": {
+                "kind": "build",
+            },
+        },
+        // Subtasks used by other tasks
+        {
+            "label": "[subtask] tools-config",
+            "type": "shell",
+            "command": "sudo ./tools-config -p \"E7 (AE722F80F55D5LS) - 5.5 MRAM / 13.5 SRAM\" -r \"B4\"",
+            "group": "build",
+            "options": {
+                "cwd": "${env:ALIF_SE_TOOLS}"
+            },
+        },
+        {
+            "label": "[subtask] Copy .bin",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "CONFIG=$(cat ${workspaceFolder}/build/.config 2>/dev/null || echo he_hp) && case \"$CONFIG\" in he) sudo cp -f ${workspaceFolder}/build/he/zephyr/zephyr.bin ./build/images/he_app.bin;; hp) sudo cp -f ${workspaceFolder}/build/hp/zephyr/zephyr.bin ./build/images/hp_app.bin;; he_hp) sudo cp -f ${workspaceFolder}/build/he/zephyr/zephyr.bin ./build/images/he_app.bin && sudo cp -f ${workspaceFolder}/build/hp/zephyr/zephyr.bin ./build/images/hp_app.bin;; he_mcuboot) sudo cp -f ${workspaceFolder}/build/he/mcuboot/zephyr/zephyr.bin ./build/images/he_app_bootloader.bin && sudo cp -f ${workspaceFolder}/build/he/he_app/zephyr/zephyr.signed.bin ./build/images/he_app.signed.bin;; hp_mcuboot) sudo cp -f ${workspaceFolder}/build/hp/mcuboot/zephyr/zephyr.bin ./build/images/hp_app_bootloader.bin && sudo cp -f ${workspaceFolder}/build/hp/hp_app/zephyr/zephyr.signed.bin ./build/images/hp_app.signed.bin;; he_hp_mcuboot) sudo cp -f ${workspaceFolder}/build/he/mcuboot/zephyr/zephyr.bin ./build/images/he_app_bootloader.bin && sudo cp -f ${workspaceFolder}/build/he/he_app/zephyr/zephyr.signed.bin ./build/images/he_app.signed.bin && sudo cp -f ${workspaceFolder}/build/hp/mcuboot/zephyr/zephyr.bin ./build/images/hp_app_bootloader.bin && sudo cp -f ${workspaceFolder}/build/hp/hp_app/zephyr/zephyr.signed.bin ./build/images/hp_app.signed.bin;; *) echo Error: Unknown configuration && exit 1;; esac"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${env:ALIF_SE_TOOLS}"
+            },
+            "dependsOn": [
+                "[subtask] tools-config"
+            ]
+        },
+        {
+            "label": "[subtask] Gen TOC",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "CONFIG=$(cat ${workspaceFolder}/build/.config 2>/dev/null || echo he_hp) && sudo ./app-gen-toc -f ${workspaceFolder}/project/boards/toc-configs/e7_${CONFIG}.json"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${env:ALIF_SE_TOOLS}"
+            },
+            "dependsOn": [
+                "[subtask] Copy .bin"
+            ]
+        },
+    ],
+    "inputs": [
+        {
+            "type": "pickString",
+            "id": "coreConfiguration",
+            "description": "Core configuration",
+            "options": [
+                {
+                    "label": "HE only",
+                    "value": "he"
+                },
+                {
+                    "label": "HP only",
+                    "value": "hp"
+                },
+                {
+                    "label": "HE & HP",
+                    "value": "he_hp"
+                },
+                {
+                    "label": "HE only with MCUboot",
+                    "value": "he_mcuboot"
+                },
+                {
+                    "label": "HP only with MCUboot",
+                    "value": "hp_mcuboot"
+                },
+                {
+                    "label": "HE & HP with MCUboot",
+                    "value": "he_hp_mcuboot"
+                }
+            ],
+            "default": "he_hp",
+        }
+    ]
+}
+
+
+
+

@@ -1,0 +1,81 @@
+{
+    "editor.formatOnSave": true,
+    "editor.insertSpaces": true,
+    "editor.indentSize": 2,
+    "cmake.configureOnOpen": false,
+    "C_Cpp.codeAnalysis.runAutomatically": true,
+    "C_Cpp.codeAnalysis.clangTidy.enabled": true,
+    "C_Cpp.workspaceParsingPriority": "medium",
+    "C_Cpp.autoAddFileAssociations": false,
+    "C_Cpp.loggingLevel": "Information",
+    "files.associations": {},
+    // Use system include path for both the toolchain and zephyr includes
+    "C_Cpp.default.systemIncludePath": [
+        "/opt/zephyr-sdk-0.16.4/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc",
+        "/opt/zephyr-sdk-0.16.4/arm-zephyr-eabi/arm-zephyr-eabi/include",
+        "/opt/zephyr-sdk-0.16.4/arm-zephyr-eabi/lib/gcc/arm-zephyr-eabi/12.2.0/include",
+        "${workspaceFolder}/zephyr/include",
+        "${workspaceFolder}/zephyr/subsys/testsuite/include",
+        "${workspaceFolder}/zephyr/subsys/testsuite/ztest/include",
+        "${workspaceFolder}/build/zephyr/include/generated/",
+    ],
+    "files.exclude": {
+        "**/.git": true
+    },
+    "C_Cpp.files.exclude": {
+        "tools/": true,
+        "bootloader/": true,
+        "modules/": true,
+    },
+    "C_Cpp.codeAnalysis.exclude": {
+        "zephyr/": true,
+    },
+    "files.watcherExclude": {
+        "zephyr/": true,
+        "modules/": true,
+        "tools/": true,
+        "docs/": true,
+        "bootloader/": true,
+        "**/build/": true,
+    },
+    "VsCodeTaskButtons.showCounter": false,
+    "VsCodeTaskButtons.tasks": [
+        {
+            "label": "$(gear) Initialize",
+            "task": "Initialize"
+        },
+        {
+            "label": "$(sync) Update",
+            "task": "Update"
+        },
+        {
+            "label": "$(symbol-property) Configure",
+            "task": "Configure",
+            "tooltip": "Select core configuration"
+        },
+        {
+            "label": "$(symbol-property) Build",
+            "task": "Build",
+            "tooltip": "Build current configuration (Ctrl+Maj+B)"
+        },
+        {
+            "label": "$(rocket) Flash",
+            "task": "Flash",
+            "tooltip": "Flash current configuration or run it on native sim"
+        },
+        {
+            "label": "$(trash) Clean",
+            "task": "Clean",
+            "tooltip": "Delete build directory"
+        },
+        {
+            "label": "$(beaker) Run tests",
+            "task": "Run tests",
+            "tooltip": "Build and run all tests on native sim"
+        }
+    ],
+    "cortex-debug.variableUseNaturalFormat": false,
+    "files.associations": {
+        "*.overlay": "dts"
+    },
+}

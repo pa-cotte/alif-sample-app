@@ -1,0 +1,18 @@
+{
+    "DEVICE": {
+        "disabled": false,
+        "binary": "app-device-config.json",
+        "version": "0.5.00",
+        "signed": true
+    },
+    "Zephyr-RTSS-HP": {
+        "binary": "hp_app.bin",
+        "version": "1.0.0",
+        "cpu_id": "M55_HP",
+        "mramAddress": "0x80200000",
+        "flags": [
+            "boot"
+        ],
+        "signed": false
+    }
+}

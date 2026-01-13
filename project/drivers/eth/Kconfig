@@ -1,0 +1,21 @@
+menuconfig ETH_ALIF
+    bool "Enable Alif native Ethernet driver"
+    depends on DT_HAS_ZEPHYR_ETH_ALIF_ENABLED
+    select NET_L2_ETHERNET
+    select NETWORKING
+    help
+      Enable the driver for the Alif E7 Ethernet controller.
+
+if ETH_ALIF
+
+config ETH_ALIF_RX_DELAY_US
+    int "Delay in microseconds after packet reception"
+    default 1
+    range 0 1000
+    help
+      Add a delay after receiving each packet to help with ARP timing issues.
+      Workaround for Alif E7 platform where ARP packets are not properly
+      received without this delay. Default is 20 microseconds.
+
+endif # ETH_ALIF
+  

@@ -1,0 +1,9 @@
+tests:
+  project.hp_app:
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim
+
+    tags: [hp_app]
+    harness: ztest
