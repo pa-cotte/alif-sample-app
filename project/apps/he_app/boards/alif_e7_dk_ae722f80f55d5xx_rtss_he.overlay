@@ -1,3 +1,82 @@
+/* SRAM0 @ 0x02080000 as zephyr,sram (DTCM 256 KB too small for network stack).
+ * 0x02000000-0x0207FFFF kept as NON_SECURE0 for DWMAC + SDHC DMA buffers. */
+&sram0 {
+	reg = <0x02080000 DT_SIZE_K(512)>;
+};
+
+&ns {
+	reg = <0x02000000 DT_SIZE_K(512)>;
+	status = "okay";
+};
+
+/* ---- BLE HCI (Infineon CYW43xxx on UART3) ---- */
+
+/ {
+	chosen {
+		zephyr,bt-uart = &uart3;
+		zephyr,bt-hci = &bt_hci_uart;
+	};
+};
+
+&gpio0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio0>;
+};
+
+&gpio14 {
+	status = "okay";
+};
+
+&pinctrl {
+	pinctrl_uart3: pinctrl_uart3 {
+		group0 {
+			pinmux = <PIN_P1_2__UART3_RX_A>,
+				<PIN_P1_3__UART3_TX_A>,
+				<PIN_P7_2__UART3_CTS_B>,
+				<PIN_P7_3__UART3_RTS_B>;
+		};
+	};
+};
+
+&uart3 {
+	status = "okay";
+	current-speed = <115200>;
+	hw-flow-control;
+	pinctrl-0 = <&pinctrl_uart3>;
+
+	bt_hci_uart: bt_hci_uart {
+		compatible = "zephyr,bt-hci-uart";
+		status = "okay";
+
+		bt-hci {
+			compatible = "infineon,cyw43xxx-bt-hci";
+			status = "okay";
+			bt-reg-on-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+/* ---- WiFi (SDHC + AIROC CYW55513 / Murata 2FY) ---- */
+
+&sdhc {
+	compatible = "snps,dwc-sdhc";
+	status = "okay";
+	power-delay-ms = <500>;
+	/* SD_*_A pads rated 25 MHz max (datasheet §3.18).
+	 * 50 MHz causes CRC errors on CMD53 to AIROC. */
+	max-bus-freq = <25000000>;
+	/delete-property/ cd-gpios;
+
+	airoc-wifi {
+		compatible = "infineon,airoc-wifi";
+		status = "okay";
+		wifi-reg-on-gpios = <&gpio14 7 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* ---- Ethernet ---- */
+
 &pinctrl {
 	pinctrl_eth0: pinctrl_eth0 {
 		#pinctrl-state-cells = <0>;

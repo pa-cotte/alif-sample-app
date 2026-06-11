@@ -1,0 +1,111 @@
+# Confidential - Copyright PA.COTTE: All rights reserved
+#
+# Patches applied to third-party modules (zephyr / hal_infineon / …)
+# via `west patch -l project/zephyr/patches.yml ... apply`.
+#
+# Entry format:
+#
+#   - path: <dir>/<file>.patch            # path relative to project/zephyr/patches/
+#     sha256sum: <hex>                    # patch checksum (verified at apply time)
+#     module: <zephyr|hal_infineon|...>   # target module (= west project)
+#     author: <Name>                      # patch author (informational)
+#     email: <email>                      # author email (informational)
+#     date: YYYY-MM-DD                    # write / last-update date
+#     upstreamable: <true|false>          # optional — intended for upstream submission
+#     apply-command: git apply            # apply command (usually `git apply`)
+#     comments: |                         # multi-line rationale (CONTEXT, FIX, NOTE…)
+#       <patch description and intent>
+#
+# Binary patches live in `project/zephyr/patches/<module>/*.patch`.
+
+patches:
+  # ── BLE CYW55513 / Murata 2FY support (Alif v2.3.0 ships WiFi only) ──
+  # WiFi side keeps CONFIG_CYW955513SDM2WLIPA_SM=y (from the Alif AIROC
+  # driver); the 3 patches below add the missing BLE side.
+  - path: zephyr/bt-hci-infineon-cyw55513-support.patch
+    sha256sum: 936d11da02e0010cea0f7de6e7e9070cba07b8390673de119463dba9c6a6f7de
+    module: zephyr
+    author: Claude
+    email: noreply@anthropic.com
+    date: 2026-04-14
+    upstreamable: false
+    apply-command: git apply
+    comments: |
+      Backport from zephyrproject-rtos/zephyr PR #104238 (commit 832b5f65)
+      plus local CYW55513 power-on timing fixes.
+      - drivers/bluetooth/hci/Kconfig.infineon: new choice BT_CYW55500_MODULE
+        with BT_CYW55513IUBG_SM and BT_CYW55513_MURATA_2FY, plus common
+        BT_CYW555XX switch. BT_ prefix avoids collision with the
+        Kconfig.airoc WiFi-side CYW55500_MODULE choice.
+      - drivers/bluetooth/hci/h4_ifx_cyw43xxx.c:
+        * add vendor-specific command WRITE_PCM_INT_PARAM (0xFC1C) and
+          bt_update_sco_route() called at the end of bt_h4_vnd_setup()
+          when BT_CYW555XX=y. Required because in BLE-only mode the host
+          does not populate SCO packet count/size in Host Buffer Size;
+          if the SCO route stays on Transport the CYW55513 controller
+          returns "invalid command". Forcing the route to PCM with
+          zero-initialized parameters works around this.
+        * bump BT_POWER_ON_SETTLING_TIME_MS from 500 ms to 1500 ms. The
+          CYW55513 (Murata 2FY) needs ~1 s more than CYW43439 after
+          BT_REG_ON assertion before accepting HCI commands. With 500 ms,
+          DOWNLOAD_MINIDRIVER appears to succeed but the first WRITE_RAM
+          is rejected with status 0x12 (invalid params) because the chip
+          is still booting.
+        * add a 50 ms delay between DOWNLOAD_MINIDRIVER and the first
+          WRITE_RAM chunk — same "still booting" symptom, belt-and-suspenders.
+      Driver is still named h4_ifx_cyw43xxx.c in zephyr_alif v2.3.0 and uses
+      bt_hci_cmd_create() and a direct-hex VSC enum (verified: applies clean).
+
+  - path: zephyr/btstack-integration-cyw55513.patch
+    sha256sum: 2bec9cbb858fa28a9d736923d8a77fd481c6f5b2d5dec9cc6d681712c5cb58bf
+    module: zephyr
+    author: Claude
+    email: noreply@anthropic.com
+    date: 2026-04-14
+    upstreamable: false
+    apply-command: git apply
+    comments: |
+      Backport from zephyrproject-rtos/zephyr PR #104238 (commit 9859b219).
+      modules/hal_infineon/btstack-integration/CMakeLists.txt: wire the
+      BT firmware HCD file path for CYW55513 discrete (CYW55513IUBG_SM)
+      and Murata 2FY (BT_CYW55513_MURATA_2FY) modules. Pairs with the
+      hal_infineon/cyw55513-firmware-blobs.patch that adds the blob
+      entries to module.yml for `west blobs fetch hal_infineon`.
+
+  - path: zephyr/airoc-kconfig-conditional-rtos-select.patch
+    sha256sum: 4ab4e44ef7142557c2a66043e829399abce31dff83d461abb6c6a3d3f322915e
+    module: zephyr
+    author: Claude
+    email: noreply@anthropic.com
+    date: 2026-06-11
+    upstreamable: true
+    apply-command: git apply
+    comments: |
+      CONTEXT: hal_infineon is not in this project's west manifest, so
+      ZEPHYR_HAL_INFINEON_MODULE=n and USE_INFINEON_ABSTRACTION_RTOS is
+      unreachable (direct deps = 0). WIFI_AIROC unconditionally selects it,
+      generating a Kconfig "select vs deps" warning that aborts the build.
+      FIX: guard the select with `if ZEPHYR_HAL_INFINEON_MODULE` so the
+      select is a no-op when the module is absent. The AIROC driver C code
+      (airoc_wifi.c / airoc_whd_hal_common.c) does not include any
+      abstraction-rtos headers, so WiFi still compiles and runs correctly.
+
+  - path: hal_infineon/cyw55513-firmware-blobs.patch
+    sha256sum: dd1f38e86b71054b7fc619a105fb5484da0f68be06e60c85334df7872626ff0a
+    module: hal_infineon
+    author: Claude
+    email: noreply@anthropic.com
+    date: 2026-06-08
+    upstreamable: false
+    apply-command: git apply
+    comments: |
+      Add two CYW55513 BT firmware blob entries to hal_infineon
+      zephyr/module.yml. Re-anchored to the v2.3.0 hal_infineon (470f874)
+      layout, which ships the WHD under whd-expansion/ and ends the BT
+      firmware list at CYW20829B1 (the original patch targeted the older
+      6890899e0 layout and no longer applied):
+      - COMPONENT_CYW55513/COMPONENT_BTFW/bt_firmware.hcd (discrete SM)
+      - COMPONENT_CYW55513/COMPONENT_BTFW_MURATA-2FY/bt_firmware.hcd (2FY)
+      After applying this patch, run `west blobs fetch hal_infineon` to
+      download the new .hcd blobs. Required for working BLE on the Murata
+      2FY module: Alif v2.3.0 ships WiFi support only, no BT firmware.

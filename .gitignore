@@ -3,6 +3,8 @@
 build/
 /modules/
 /zephyr/
+project/modules/
+project/zephyr/modules/
 twister-out*/
 .gdb_history
 __pycache__
@@ -11,3 +13,5 @@ openocd/
 nohup.out
 mcu/tools
 *.bin
+.ref-zephyr/firmware/
+.config/config.json

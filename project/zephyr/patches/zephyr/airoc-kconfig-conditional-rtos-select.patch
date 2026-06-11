@@ -1,0 +1,13 @@
+diff --git a/drivers/wifi/infineon/Kconfig.airoc b/drivers/wifi/infineon/Kconfig.airoc
+index aaec732b28d..78e88eb05c3 100644
+--- a/drivers/wifi/infineon/Kconfig.airoc
++++ b/drivers/wifi/infineon/Kconfig.airoc
+@@ -12,7 +12,7 @@ menuconfig WIFI_AIROC
+ 	select NET_L2_WIFI_MGMT
+ 	select GPIO
+ 	select WIFI_USE_NATIVE_NETWORKING
+-	select USE_INFINEON_ABSTRACTION_RTOS
++	select USE_INFINEON_ABSTRACTION_RTOS if ZEPHYR_HAL_INFINEON_MODULE
+ 	help
+ 	  Enable Infineon AIROC SoC Wi-Fi support.
+ 
