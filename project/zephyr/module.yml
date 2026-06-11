@@ -1,4 +1,5 @@
 build:
+  cmake: cmake
   settings:
     # Additional roots for boards and DTS files. Zephyr will use the
     # `<board_root>/boards` for additional boards. The `.` is the root of this

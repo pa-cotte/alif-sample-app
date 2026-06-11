@@ -1,5 +1,5 @@
 manifest:
-    
+
   remotes:
     - name: alif
       url-base: https://github.com/alifsemi
@@ -11,15 +11,20 @@ manifest:
   projects:
     - name: zephyr
       remote: alif
-      revision: main
       repo-path: zephyr_alif
+      revision: v2.3.0
       import:
         name-allowlist:
-          - segger       
+          - hal_alif
+          - hal_ethos_u
+          - segger
           - liblc3
           - mbedtls
-          - hal_alif   
-          - hal_ethos_u
+          - littlefs
+          - hal_nordic
+          - tinycrypt
+          - open-amp
+          - libmetal
 
     - name: mcuboot_alif
       remote: alif

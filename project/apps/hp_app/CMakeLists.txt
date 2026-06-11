@@ -8,6 +8,9 @@ list(APPEND ZEPHYR_EXTRA_MODULES ${PROJECT_DIR}/drivers)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
+# Warnings as errors for C++ (C/ASM already handled by CONFIG_COMPILER_WARNINGS_AS_ERRORS)
+zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler,warnings_as_errors>>)
+
 project(hp_app)
 
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR})
