@@ -53,6 +53,7 @@
 			compatible = "infineon,cyw43xxx-bt-hci";
 			status = "okay";
 			bt-reg-on-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+			fw-download-speed = <3000000>;
 		};
 	};
 };

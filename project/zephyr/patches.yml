@@ -23,38 +23,30 @@ patches:
   # WiFi side keeps CONFIG_CYW955513SDM2WLIPA_SM=y (from the Alif AIROC
   # driver); the 3 patches below add the missing BLE side.
   - path: zephyr/bt-hci-infineon-cyw55513-support.patch
-    sha256sum: 936d11da02e0010cea0f7de6e7e9070cba07b8390673de119463dba9c6a6f7de
+    sha256sum: af928413511132b1688d5fc1b293fe00f84e0cb997c765d986e4be9ea176d462
     module: zephyr
     author: Claude
     email: noreply@anthropic.com
-    date: 2026-04-14
+    date: 2026-06-10
     upstreamable: false
     apply-command: git apply
     comments: |
-      Backport from zephyrproject-rtos/zephyr PR #104238 (commit 832b5f65)
-      plus local CYW55513 power-on timing fixes.
-      - drivers/bluetooth/hci/Kconfig.infineon: new choice BT_CYW55500_MODULE
-        with BT_CYW55513IUBG_SM and BT_CYW55513_MURATA_2FY, plus common
-        BT_CYW555XX switch. BT_ prefix avoids collision with the
-        Kconfig.airoc WiFi-side CYW55500_MODULE choice.
-      - drivers/bluetooth/hci/h4_ifx_cyw43xxx.c:
-        * add vendor-specific command WRITE_PCM_INT_PARAM (0xFC1C) and
-          bt_update_sco_route() called at the end of bt_h4_vnd_setup()
-          when BT_CYW555XX=y. Required because in BLE-only mode the host
-          does not populate SCO packet count/size in Host Buffer Size;
-          if the SCO route stays on Transport the CYW55513 controller
-          returns "invalid command". Forcing the route to PCM with
-          zero-initialized parameters works around this.
-        * bump BT_POWER_ON_SETTLING_TIME_MS from 500 ms to 1500 ms. The
-          CYW55513 (Murata 2FY) needs ~1 s more than CYW43439 after
-          BT_REG_ON assertion before accepting HCI commands. With 500 ms,
-          DOWNLOAD_MINIDRIVER appears to succeed but the first WRITE_RAM
-          is rejected with status 0x12 (invalid params) because the chip
-          is still booting.
-        * add a 50 ms delay between DOWNLOAD_MINIDRIVER and the first
-          WRITE_RAM chunk — same "still booting" symptom, belt-and-suspenders.
-      Driver is still named h4_ifx_cyw43xxx.c in zephyr_alif v2.3.0 and uses
-      bt_hci_cmd_create() and a direct-hex VSC enum (verified: applies clean).
+      Kconfig-only: backport of the module-selection part of
+      zephyrproject-rtos/zephyr PR #104238 (commit 832b5f65).
+      drivers/bluetooth/hci/Kconfig.infineon: new choice BT_CYW55500_MODULE
+      with BT_CYW55513IUBG_SM and BT_CYW55513_MURATA_2FY, plus common
+      BT_CYW555XX switch. BT_ prefix avoids collision with the Kconfig.airoc
+      WiFi-side CYW55500_MODULE choice.
+
+      NOTE (2026-06-10): the driver-side changes that used to live here in
+      h4_ifx_cyw43xxx.c were dropped after Infineon BT SW feedback (Jia,
+      ACS-1852) and the switch to a 3 Mbaud FW download:
+      - SCO-route-to-PCM VSC (WRITE_PCM_INT_PARAM 0xFC1C): not needed in our
+        LE-only design.
+      - BT_POWER_ON_SETTLING_TIME_MS 500->1500 ms and the 50 ms pre-WRITE_RAM
+        delay: workarounds for an unreliable 115200-baud download. The board
+        DT now sets fw-download-speed = <3000000> so the .hcd transfers in
+        under ~1 s and the stock 500 ms settling is enough.
 
   - path: zephyr/btstack-integration-cyw55513.patch
     sha256sum: 2bec9cbb858fa28a9d736923d8a77fd481c6f5b2d5dec9cc6d681712c5cb58bf
