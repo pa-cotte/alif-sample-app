@@ -11,15 +11,14 @@ What this script does (in order):
      "patch already applied" on a workspace that was previously patched.
   3. Apply project patches via `west patch apply`
      (reads project/zephyr/patches.yml, applies to zephyr / hal_infineon).
-  4. Fetch CYW55513 BLE firmware blobs directly from Infineon GitHub.
-     hal_infineon is embedded in the zephyr_alif fork (not a separate west
-     module), so `west blobs fetch hal_infineon` is unavailable. Blobs are
-     downloaded to zephyr/modules/hal_infineon/zephyr/blobs/... and their
-     SHA256 checksums are verified before accepting them.
+  4. Fetch CYW55513 BLE and CYW55500 WiFi firmware blobs directly from
+     Infineon GitHub.  Both sets go to the standalone hal_infineon west module
+     (modules/hal/infineon/zephyr/blobs/...) where ZEPHYR_HAL_INFINEON_MODULE_DIR
+     resolves, and their SHA256 checksums are verified before accepting them.
 
 Usage:
     ./tools/scripts/update.py               # update + patch + blobs
-    ./tools/scripts/update.py --no-blobs    # skip blob fetch (faster, no BLE)
+    ./tools/scripts/update.py --no-blobs    # skip blob fetch (faster, no BLE/WiFi)
     ./tools/scripts/update.py --no-patch    # west update only
 """
 
@@ -30,10 +29,10 @@ import sys
 import urllib.request
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # BLE firmware blobs for CYW55513 / Murata 2FY.
-# Paths are relative to zephyr/modules/hal_infineon/zephyr/blobs/.
+# Paths are relative to modules/hal/infineon/zephyr/blobs/.
 # URLs and SHA256 mirror the entries added by cyw55513-firmware-blobs.patch.
 _BLE_BLOBS = [
     {
@@ -47,6 +46,24 @@ _BLE_BLOBS = [
         "url": "https://github.com/Infineon/bt-fw-mur-cyw55513/raw/release-v1.0.0/COMPONENT_MURATA-2FY/btfw.hcd",
         "sha256": "1653cb542e6be9c45555e79d63eb281837abff039ee8d9d29ea8729c3a511cec",
         "description": "CYW55513 Murata 2FY BT firmware v1.0.0.8",
+    },
+]
+
+# WiFi firmware blobs for CYW55500 / CYW955513SDM2WLIPA (Murata 2FY).
+# Paths are relative to modules/hal/infineon/zephyr/blobs/.
+# URLs and SHA256 sourced from modules/hal/infineon/zephyr/module.yml.
+_WIFI_BLOBS = [
+    {
+        "path": "img/whd/resources/firmware/COMPONENT_55500/COMPONENT_SM/55500A1.trxcse",
+        "url": "https://github.com/Infineon/whd-expansion/raw/release-v1.1.0/WHD/COMPONENT_WIFI6/resources/firmware/COMPONENT_55500/COMPONENT_SM/55500A1.trxcse",
+        "sha256": "9e4b9e143d6abe58dc43ea003adf8a2668da3468859e4dc70fc330f7da418b74",
+        "description": "CYW55500 Wi-Fi firmware v1.1.0",
+    },
+    {
+        "path": "img/whd/resources/clm/COMPONENT_55500/COMPONENT_CYW955513SDM2WLIPA/55500A1.clm_blob",
+        "url": "https://github.com/Infineon/wifi-resources/raw/release-v2.0.0/clm/COMPONENT_WIFI6/COMPONENT_55500/COMPONENT_CYW955513SDM2WLIPA/55500A1.clm_blob",
+        "sha256": "1a761eeea3e9c779da87376cc1927b65f598f8e0d2514bd866d4df7cddb1d25c",
+        "description": "CYW55500 Wi-Fi CLM for CYW955513SDM2WLIPA (Murata 2FY) v2.0.0",
     },
 ]
 
@@ -80,19 +97,9 @@ def apply_patches() -> None:
     run(["west", "patch", "apply"])
 
 
-def fetch_blobs() -> None:
-    """Download CYW55513 BLE firmware blobs to the embedded hal_infineon tree.
-
-    hal_infineon is bundled inside the zephyr_alif fork at
-    zephyr/modules/hal_infineon/, not as a standalone west project.
-    `west blobs fetch hal_infineon` is therefore unavailable; blobs are
-    downloaded directly from Infineon GitHub and placed where
-    btstack-integration/CMakeLists.txt expects them:
-      ${ZEPHYR_HAL_INFINEON_MODULE_DIR}/zephyr/blobs/<path>
-    """
-    blobs_root = REPO_ROOT / "zephyr" / "modules" / "hal_infineon" / "zephyr" / "blobs"
-
-    for blob in _BLE_BLOBS:
+def _fetch_blob_set(blobs: list[dict], blobs_root: Path, label: str) -> None:
+    """Download a set of firmware blobs into blobs_root, verifying SHA256."""
+    for blob in blobs:
         dest = blobs_root / blob["path"]
 
         if dest.exists():
@@ -120,7 +127,20 @@ def fetch_blobs() -> None:
 
         print(f"  OK ({digest[:16]}...)", flush=True)
 
-    print(f"BLE blobs ready in {blobs_root}", flush=True)
+    print(f"{label} blobs ready in {blobs_root}", flush=True)
+
+
+def fetch_blobs() -> None:
+    """Download BLE and WiFi firmware blobs from Infineon GitHub.
+
+    BLE (CYW55513) and WiFi (CYW55500) blobs both go to the standalone
+    hal_infineon west module, which is what ZEPHYR_HAL_INFINEON_MODULE_DIR
+    resolves to when it is present in the manifest:
+      modules/hal/infineon/zephyr/blobs/<path>
+    """
+    blobs_root = REPO_ROOT / "modules" / "hal" / "infineon" / "zephyr" / "blobs"
+    _fetch_blob_set(_BLE_BLOBS, blobs_root, "BLE")
+    _fetch_blob_set(_WIFI_BLOBS, blobs_root, "WiFi")
 
 
 def main() -> int:
@@ -136,7 +156,7 @@ def main() -> int:
     parser.add_argument(
         "--no-blobs",
         action="store_true",
-        help="Skip blob fetch (faster, BLE firmware will be missing)",
+        help="Skip blob fetch (faster, BLE/WiFi firmware will be missing)",
     )
     args = parser.parse_args()
 

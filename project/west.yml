@@ -17,6 +17,7 @@ manifest:
         name-allowlist:
           - hal_alif
           - hal_ethos_u
+          - hal_infineon
           - segger
           - liblc3
           - mbedtls
