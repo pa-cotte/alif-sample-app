@@ -140,3 +140,87 @@ wget -O 60-openocd.rules https://sf.net/p/openocd/code/ci/master/tree/contrib/60
 sudo cp 60-openocd.rules /etc/udev/rules.d
 sudo udevadm control --reload
 ```
+
+---
+
+## Troubleshooting — BLE / CYW55513 (Murata 2FY)
+
+### Working baseline
+
+BLE initialises correctly at commit **`83aaccd0`** (`feat: Add BLE with 2FY`) with the patches in `project/zephyr/patches/zephyr/bt-hci-infineon-cyw55513-support.patch` applied to the Zephyr tree.
+
+### Infineon ACS-1852 recommendations — do NOT apply on this hardware
+
+Commit **`ec19642`** (`feat: apply Infineon ACS-1852 recommendations for CYW55513 BLE`) applies the recommendations received from Infineon BT SW (Jia, ACS-1852). **All three recommendations fail on the Alif E7 + Murata 2FY combination.** The analysis below documents each failure so Infineon can reproduce and diagnose from this branch.
+
+---
+
+### Failure 1 — `fw-download-speed = <3000000>` triggers UPDATE_BAUDRATE, which the CYW55513 ROM does not implement
+
+**Recommendation:** set `fw-download-speed = <3000000>` in the board devicetree overlay to switch the HCI UART from 115200 to 3 Mbaud before firmware download, making the `BT_POWER_ON_SETTLING_TIME_MS` and pre-WRITE_RAM delay workarounds unnecessary.
+
+**Observed failure (`ec19642`):**
+
+```
+ASSERTION FAIL [err == 0] @ zephyr/subsys/bluetooth/host/hci_core.c:436
+        Controller unresponsive, command opcode 0xfc18 timeout with err -11
+```
+
+**Analysis:**
+
+The Infineon driver (`h4_ifx_cyw43xxx.c`) reads the `fw-download-speed` DT property and, when it differs from 115200, sends `HCI_UPDATE_BAUDRATE` (vendor opcode `0xFC18`) to the controller **before** the HCD firmware download. The CYW55513 ROM firmware — the minimal firmware running immediately after `BT_REG_ON` — does not implement this vendor command. The controller never responds and the Zephyr BT host times out after its 10 s HCI command deadline (`err -11` = `-EAGAIN`).
+
+Evidence: the timeout occurs regardless of settling time. With 500 ms settling (`ec19642`) the timeout appears at `[00:00:13.928]`; restoring 1500 ms settling shifts it to `[00:00:14.928]` — exactly +1 s, confirming the settling time patch is applied but irrelevant to this root cause.
+
+**Required workaround:** do not set `fw-download-speed`. The HCD firmware must be downloaded at the default 115200 baud using `DOWNLOAD_MINIDRIVER (0xFC2E)` + `WRITE_RAM (0xFC4C)`.
+
+**Open question for Infineon:** does the CYW55513 ROM implement `UPDATE_BAUDRATE (0xFC18)`? If not, at what stage (and via which opcode) can the UART baud rate be changed?
+
+---
+
+### Failure 2 — `BT_POWER_ON_SETTLING_TIME_MS` must remain 1500 ms
+
+**Recommendation:** revert `BT_POWER_ON_SETTLING_TIME_MS` from 1500 ms back to the upstream default of 500 ms.
+
+**Observed failure:** same `0xFC18` timeout as Failure 1 (when `fw-download-speed` is not set, the next command in the sequence is `DOWNLOAD_MINIDRIVER` which requires the chip to be ready).
+
+**Analysis:** with 500 ms settling, `DOWNLOAD_MINIDRIVER` appears to succeed but the first `WRITE_RAM` returns HCI status `0x12` ("Invalid HCI Command Parameters"). The chip is still completing its internal boot sequence. 1500 ms is the minimum observed settling time for the CYW55513 on this power rail before it reliably accepts vendor commands at 115200 baud.
+
+**Required workaround:** keep `BT_POWER_ON_SETTLING_TIME_MS = 1500`.
+
+---
+
+### Failure 3 — 50 ms delay between DOWNLOAD_MINIDRIVER and first WRITE_RAM is required at 115200 baud
+
+**Recommendation:** remove the 50 ms `k_msleep()` inserted after `DOWNLOAD_MINIDRIVER` and before the first `WRITE_RAM` chunk.
+
+**Observed failure:** first `WRITE_RAM (0xFC4C)` returns HCI status `0x12` ("Invalid HCI Command Parameters").
+
+**Analysis:** after receiving `DOWNLOAD_MINIDRIVER`, the CYW55513 needs a short internal transition time before it is ready to accept `WRITE_RAM` chunks. Without the delay the host sends the first RAM chunk before the chip has finished switching to download mode. The symptom does not appear at higher baud rates (the inter-frame gap is larger), which is consistent with the Infineon claim that the workaround is unnecessary at 3 Mbaud — but since 3 Mbaud is blocked by Failure 1, it is still needed at 115200.
+
+**Required workaround:** keep `k_msleep(50)` between `DOWNLOAD_MINIDRIVER` and the first `WRITE_RAM`.
+
+---
+
+### Failure 4 — SCO-route-to-PCM VSC (`WRITE_PCM_INT_PARAM 0xFC1C`) is mandatory in BLE-only mode
+
+**Recommendation:** remove the `bt_update_sco_route()` call (vendor command `WRITE_PCM_INT_PARAM`, opcode `0xFC1C`) from `bt_h4_vnd_setup()`, on the grounds that it is not needed in a LE-only design.
+
+**Observed failure (after successfully downloading the HCD firmware):**
+
+```
+<wrn> bt_hci_core: opcode 0x0c33 status 0x12
+<err> app: bt_enable failed: -22
+```
+
+**Analysis:**
+
+Opcode `0x0C33` is `HCI_Host_Buffer_Size` (OGF=3 Control & Baseband, OCF=0x33). Zephyr's BT host sends this command during initialisation to declare the host's ACL and synchronous buffer sizes. In a BLE-only build (`CONFIG_BT_BREDR=n`) the synchronous fields are set to zero.
+
+When the SCO audio route is left at its power-on default (Transport), the CYW55513 controller rejects `HCI_Host_Buffer_Size` with status `0x12` because the zero synchronous packet count is inconsistent with a Transport-routed SCO path. Re-routing SCO to PCM via `WRITE_PCM_INT_PARAM (0xFC1C)` before `HCI_Host_Buffer_Size` is sent eliminates the rejection.
+
+The Infineon ACS-1852 feedback stated this VSC is "not needed in LE-only design". This holds if the controller firmware suppresses the SCO route check when no SCO connections are active, but the behaviour observed here shows the check fires unconditionally during HCI init. The fix may depend on the firmware version or on a different initialisation order.
+
+**Required workaround:** keep `bt_update_sco_route()` (`WRITE_PCM_INT_PARAM 0xFC1C`, zero-initialised parameters) at the end of `bt_h4_vnd_setup()` when `CONFIG_BT_CYW555XX=y`.
+
+**Open question for Infineon:** is there a firmware version or Kconfig flag that suppresses the SCO route check during `HCI_Host_Buffer_Size` when no SCO connections are configured?
