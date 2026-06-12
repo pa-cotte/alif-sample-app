@@ -172,6 +172,8 @@ The Infineon driver (`h4_ifx_cyw43xxx.c`) reads the `fw-download-speed` DT prope
 
 Evidence: the timeout occurs regardless of settling time. With 500 ms settling (`ec19642`) the timeout appears at `[00:00:13.928]`; restoring 1500 ms settling shifts it to `[00:00:14.928]` — exactly +1 s, confirming the settling time patch is applied but irrelevant to this root cause.
 
+**Capture & logs:** the logic capture [`doc/06952c7….sal`](doc/06952c74c58d0680fa519ae7edbcb7ee80e686ba.sal) contains the **RX / TX** (UART3 HCI) and **BT_REG_ON** (P0_2) signals; the matching Zephyr HE-core logs are in [`doc/06952c7….txt`](doc/06952c74c58d0680fa519ae7edbcb7ee80e686ba.txt). `.sal` files open with **Saleae Logic 2** (download: <https://www.saleae.com/downloads>).
+
 **Required workaround:** do not set `fw-download-speed`. The HCD firmware must be downloaded at the default 115200 baud using `DOWNLOAD_MINIDRIVER (0xFC2E)` + `WRITE_RAM (0xFC4C)`.
 
 **Open question for Infineon:** does the CYW55513 ROM implement `UPDATE_BAUDRATE (0xFC18)`? If not, at what stage (and via which opcode) can the UART baud rate be changed?
