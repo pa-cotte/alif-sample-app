@@ -35,6 +35,6 @@ auto main() -> int
       return 0;
     }
 
-    k_msleep(500);
+    k_msleep(3000);
   }
 }
