@@ -8,6 +8,14 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(GREEN_LED_NODE, gpios);
 
 LOG_MODULE_REGISTER(app);
 
+#include <zephyr/init.h>
+static int repro_rx_window(void)
+{
+  k_msleep(1000);
+  return 0;
+}
+SYS_INIT(repro_rx_window, POST_KERNEL, 85);
+
 auto main() -> int
 {
   int ret;
