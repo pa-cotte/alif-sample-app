@@ -17,5 +17,44 @@ config ETH_ALIF_RX_DELAY_US
       Workaround for Alif E7 platform where ARP packets are not properly
       received without this delay. Default is 20 microseconds.
 
+config ETH_ALIF_RX_DESC_COUNT
+    int "Number of RX DMA descriptors / buffers"
+    default 24
+    range 4 64
+    help
+      Size of the receive DMA descriptor ring (one 1536-byte buffer each, in
+      the ETH_DMA region). Larger rings absorb RX bursts while the CPU drains
+      them, reducing MAC-level drops (Rx Buffer Unavailable) at high rates.
+      Keep RX+TX buffers within the ETH_DMA memory region.
+
+config ETH_ALIF_TX_DESC_COUNT
+    int "Number of TX DMA descriptors / buffers"
+    default 8
+    range 4 64
+    help
+      Size of the transmit DMA descriptor ring (one 1536-byte buffer each).
+
+config ETH_ALIF_ZEROCOPY_RX
+    bool "Zero-copy RX (hand DMA buffers to the net stack without memcpy)"
+    default n
+    help
+      Experimental. Instead of copying each received frame into a freshly
+      allocated net_pkt buffer (net_pkt_write), wrap the DMA buffer in an
+      external-data net_buf and recycle it through a free-list once the stack
+      frees it. Removes one per-packet 1.5 KB memcpy from the RX path. Needs
+      RX spare buffers in the ETH_DMA region: RX buffers = 2 x RX_DESC_COUNT,
+      so keep RX_DESC_COUNT small enough that 2*RX + TX buffers fit ETH_DMA.
+
+config ETH_ALIF_ZEROCOPY_TX
+    bool "Zero-copy TX (DMA straight from the net_pkt, no memcpy)"
+    default n
+    help
+      Experimental. When a net_pkt to transmit is a single contiguous fragment
+      (set CONFIG_NET_BUF_DATA_SIZE >= frame size, e.g. 1536), point the TX DMA
+      descriptor straight at the fragment data instead of copying it into a
+      driver TX buffer (net_pkt_read). The net_pkt is referenced until the DMA
+      completes and unref'd on TX-complete. Multi-fragment packets fall back to
+      the copy path.
+
 endif # ETH_ALIF
   

@@ -11,3 +11,4 @@ openocd/
 nohup.out
 mcu/tools
 *.bin
+perf_report.md

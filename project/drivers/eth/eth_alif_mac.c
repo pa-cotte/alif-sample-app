@@ -10,6 +10,7 @@
 #include <zephyr/net/ethernet.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/net_pkt.h>
+#include <zephyr/net_buf.h>
 #include <zephyr/sys/time_units.h>
 #include <zephyr/sys/util.h>
 
@@ -24,8 +25,8 @@ BUILD_ASSERT(ETH_BASE == DT_REG_ADDR(DT_INST(0, zephyr_eth_alif)), "ETH_BASE doe
 #define DT_DRV_COMPAT zephyr_eth_alif
 
 #define ETH_ALIF_PRIORITY 80
-#define RX_DESC_COUNT 8
-#define TX_DESC_COUNT 8
+#define RX_DESC_COUNT CONFIG_ETH_ALIF_RX_DESC_COUNT
+#define TX_DESC_COUNT CONFIG_ETH_ALIF_TX_DESC_COUNT
 #define ETH_BUF_SIZE 1536
 
 #define ETH_IRQ_PRIORITY 0
@@ -63,9 +64,54 @@ uint8_t mac_addr[6] = {
 
 /* Area for descriptors */
 
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+/* Zero-copy needs spare buffers in flight while the stack holds the rest. */
+#define RX_BUF_COUNT (RX_DESC_COUNT * 2)
+#else
+#define RX_BUF_COUNT RX_DESC_COUNT
+#endif
+
 static DMA_DESC dma_descs[RX_DESC_COUNT + TX_DESC_COUNT] __attribute__((section("ETH_DMA"), aligned(32)));
-static uint32_t rx_buffers[RX_DESC_COUNT][ETH_BUF_SIZE >> 2] __attribute__((section("ETH_DMA"), aligned(32)));
+static uint32_t rx_buffers[RX_BUF_COUNT][ETH_BUF_SIZE >> 2] __attribute__((section("ETH_DMA"), aligned(32)));
 static uint32_t tx_buffers[TX_DESC_COUNT][ETH_BUF_SIZE >> 2] __attribute__((section("ETH_DMA"), aligned(32)));
+
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+/* Which buffer index each Rx descriptor currently owns. */
+static uint16_t desc_buf_idx[RX_DESC_COUNT];
+/* LIFO of buffer indices not currently attached to a descriptor. */
+static uint16_t rx_free_stack[RX_BUF_COUNT];
+static int rx_free_top;
+static struct k_spinlock rx_free_lock;
+
+static inline void rx_free_push(uint16_t idx)
+{
+  k_spinlock_key_t key = k_spin_lock(&rx_free_lock);
+  rx_free_stack[rx_free_top++] = idx;
+  k_spin_unlock(&rx_free_lock, key);
+}
+
+static inline int rx_free_pop(void)
+{
+  k_spinlock_key_t key = k_spin_lock(&rx_free_lock);
+  int idx = (rx_free_top > 0) ? rx_free_stack[--rx_free_top] : -1;
+  k_spin_unlock(&rx_free_lock, key);
+  return idx;
+}
+
+/* Called by the net stack when it is done with a wrapped Rx buffer. */
+static void rx_nb_destroy(struct net_buf *buf)
+{
+  uint16_t idx = ((uint8_t *)buf->__buf - (uint8_t *)rx_buffers) / sizeof(rx_buffers[0]);
+  rx_free_push(idx);
+  net_buf_destroy(buf);
+}
+
+NET_BUF_POOL_DEFINE(rx_nb_pool, RX_BUF_COUNT, 0, 0, rx_nb_destroy);
+
+static inline uint32_t *rx_desc_buffer(uint32_t id) { return rx_buffers[desc_buf_idx[id]]; }
+#else
+static inline uint32_t *rx_desc_buffer(uint32_t id) { return rx_buffers[id]; }
+#endif
 
 typedef struct
 {
@@ -84,6 +130,11 @@ static struct net_if *eth_iface;
 
 static struct k_work tx_work;
 static struct k_work rx_work;
+
+#if CONFIG_ETH_ALIF_ZEROCOPY_TX
+/* net_pkt held per TX descriptor for zero-copy, unref'd on TX-complete. */
+static struct net_pkt *tx_pkt[TX_DESC_COUNT];
+#endif
 
 static void eth_alif_iface_init(struct net_if *iface)
 {
@@ -109,6 +160,15 @@ static void eth_alif_tx_work_handler(struct k_work *work)
     if (desc->des3 & TDES3_OWN)
       break;
 
+#if CONFIG_ETH_ALIF_ZEROCOPY_TX
+    /* DMA done with this descriptor: release the zero-copy packet (if any). */
+    if (tx_pkt[MAC_DEV.tx_clean_id])
+    {
+      net_pkt_unref(tx_pkt[MAC_DEV.tx_clean_id]);
+      tx_pkt[MAC_DEV.tx_clean_id] = NULL;
+    }
+#endif
+
     // Safe to reclaim
     desc->des0 = 0;
     desc->des1 = 0;
@@ -120,6 +180,80 @@ static void eth_alif_tx_work_handler(struct k_work *work)
     MAC_DEV.tx_clean_id = (MAC_DEV.tx_clean_id + 1) % TX_DESC_COUNT;
   }
 }
+
+/* Common tail: hand a ready net_pkt to the stack, applying the optional
+ * post-RX delay workaround. Returns 0 on success, <0 on failure (pkt unref'd).
+ */
+static int rx_deliver(struct net_pkt *pkt)
+{
+  int ret = net_recv_data(eth_iface, pkt);
+  if (ret < 0)
+  {
+    LOG_ERR("net_recv_data() failed: %d", ret);
+    net_pkt_unref(pkt);
+    return ret;
+  }
+
+#if CONFIG_ETH_ALIF_RX_DELAY_US > 0
+  /* Add delay to help with ARP timing issues */
+  k_busy_wait(CONFIG_ETH_ALIF_RX_DELAY_US);
+#endif
+  return 0;
+}
+
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+/* Zero-copy: wrap the DMA buffer in an external-data net_buf and hand it to
+ * the stack. Pulls a spare buffer for the descriptor; the wrapped buffer is
+ * returned to the free-list by rx_nb_destroy() when the stack is done.
+ * Returns the buffer index to re-arm the descriptor with (a fresh spare on
+ * success, or the same buffer on any failure -> frame dropped).
+ */
+static int read_rxdesc_zc(DMA_DESC *desc, uint32_t len, uint32_t cur_idx)
+{
+  uint32_t *rx_buffer = rx_buffers[cur_idx];
+
+  if (!(desc->des3 & RDES3_FIRST_DESCRIPTOR && desc->des3 & RDES3_LAST_DESCRIPTOR))
+    LOG_ERR("Fragmented descriptor content");
+
+  SCB_InvalidateDCache_by_Addr(rx_buffer, ROUND_UP(len, 32));
+
+  /* Need a spare to keep the descriptor armed once we give this buffer away. */
+  int spare = rx_free_pop();
+  if (spare < 0)
+  {
+    LOG_ERR("no spare RX buffer (stack backlog)");
+    return cur_idx; /* drop, keep current buffer */
+  }
+
+  struct net_pkt *pkt = net_pkt_rx_alloc_on_iface(eth_iface, K_NO_WAIT);
+  if (!pkt)
+  {
+    LOG_ERR("net_pkt_rx_alloc_on_iface() failed");
+    rx_free_push(spare);
+    return cur_idx;
+  }
+
+  struct net_buf *frag = net_buf_alloc_with_data(&rx_nb_pool, rx_buffer, len, K_NO_WAIT);
+  if (!frag)
+  {
+    LOG_ERR("net_buf_alloc_with_data() failed");
+    net_pkt_unref(pkt);
+    rx_free_push(spare);
+    return cur_idx;
+  }
+
+  net_pkt_frag_add(pkt, frag);
+
+  if (rx_deliver(pkt) < 0)
+  {
+    /* pkt (and its frag) unref'd by rx_deliver -> rx_nb_destroy recycles the
+     * wrapped buffer; use the spare for the descriptor. */
+    return spare;
+  }
+
+  return spare;
+}
+#endif
 
 static void read_rxdesc(DMA_DESC *desc, uint32_t len, uint32_t *rx_buffer)
 {
@@ -147,19 +281,7 @@ static void read_rxdesc(DMA_DESC *desc, uint32_t len, uint32_t *rx_buffer)
     return;
   }
 
-  ret = net_recv_data(eth_iface, pkt);
-  if (ret < 0)
-  {
-    LOG_ERR("net_recv_data() failed: %d", ret);
-    net_pkt_unref(pkt);
-
-    return;
-  }
-
-#if CONFIG_ETH_ALIF_RX_DELAY_US > 0
-  /* Add delay to help with ARP timing issues */
-  k_busy_wait(CONFIG_ETH_ALIF_RX_DELAY_US);
-#endif
+  rx_deliver(pkt);
 }
 
 static void eth_alif_rx_work_handler(struct k_work *work)
@@ -179,22 +301,36 @@ static void eth_alif_rx_work_handler(struct k_work *work)
 
     updated = true;
 
+    uint32_t id = MAC_DEV.rx_desc_id;
     uint32_t len = desc->des3 & 0x7fff;
-    if (len > 0 && len <= ETH_BUF_SIZE)
-      read_rxdesc(desc, len, rx_buffers[MAC_DEV.rx_desc_id]);
 
-    desc->des0 = local_to_global(rx_buffers[MAC_DEV.rx_desc_id]);
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+    if (len > 0 && len <= ETH_BUF_SIZE)
+      desc_buf_idx[id] = read_rxdesc_zc(desc, len, desc_buf_idx[id]);
+    uint32_t *buf = rx_desc_buffer(id);
+#else
+    if (len > 0 && len <= ETH_BUF_SIZE)
+      read_rxdesc(desc, len, rx_buffers[id]);
+    uint32_t *buf = rx_buffers[id];
+#endif
+
+    desc->des0 = local_to_global(buf);
     desc->des1 = ETH_BUF_SIZE;
     desc->des2 = 0;
     desc->des3 = RDES3_OWN | RDES3_INT_ON_COMPLETION_EN | RDES3_BUFFER1_VALID_ADDR;
 
-    if (MAC_DEV.rx_desc_id == RX_DESC_COUNT - 1)
+    if (id == RX_DESC_COUNT - 1)
       desc->des3 |= RDES3_RER;
 
     SCB_CleanDCache_by_Addr((uint32_t *)desc, sizeof(DMA_DESC));
-    SCB_CleanDCache_by_Addr((uint32_t *)rx_buffers[MAC_DEV.rx_desc_id], ETH_BUF_SIZE);
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+    /* Fresh spare: drop any stale cached lines so the DMA write is seen. */
+    SCB_InvalidateDCache_by_Addr(buf, ETH_BUF_SIZE);
+#else
+    SCB_CleanDCache_by_Addr(buf, ETH_BUF_SIZE);
+#endif
 
-    MAC_DEV.rx_desc_id = (MAC_DEV.rx_desc_id + 1) % RX_DESC_COUNT;
+    MAC_DEV.rx_desc_id = (id + 1) % RX_DESC_COUNT;
 
     // dump_rx_dma_descs();
   }
@@ -269,14 +405,35 @@ static int eth_alif_send(const struct device *dev, struct net_pkt *pkt)
   if (desc->des3 & TDES3_OWN)
     return -EAGAIN; // queue is full – upper layer will retry
 
-  // Copy payload into the Tx buffer
-  if (net_pkt_read(pkt, tx_buffers[cur], len))
-  {
-    net_pkt_unref(pkt);
-    return -EIO;
-  }
+  uint32_t buf_addr;
 
-  SCB_CleanDCache_by_Addr(tx_buffers[cur], ROUND_UP(len, 32));
+#if CONFIG_ETH_ALIF_ZEROCOPY_TX
+  struct net_buf *frag = pkt->buffer;
+  if (frag != NULL && frag->frags == NULL && frag->len == len)
+  {
+    // Single contiguous fragment: DMA straight from the net_pkt, no copy.
+    // Keep the packet referenced until the DMA signals TX-complete.
+    SCB_CleanDCache_by_Addr(frag->data, ROUND_UP(len, 32));
+    buf_addr = local_to_global(frag->data);
+    net_pkt_ref(pkt);
+    tx_pkt[cur] = pkt;
+  }
+  else
+#endif
+  {
+    // Copy payload into the Tx buffer
+    if (net_pkt_read(pkt, tx_buffers[cur], len))
+    {
+      net_pkt_unref(pkt);
+      return -EIO;
+    }
+
+    SCB_CleanDCache_by_Addr(tx_buffers[cur], ROUND_UP(len, 32));
+    buf_addr = local_to_global(tx_buffers[cur]);
+#if CONFIG_ETH_ALIF_ZEROCOPY_TX
+    tx_pkt[cur] = NULL;
+#endif
+  }
 
   // Fill the descriptor
   uint32_t des3 = TDES3_FIRST_DESCRIPTOR | TDES3_LAST_DESCRIPTOR;
@@ -285,7 +442,7 @@ static int eth_alif_send(const struct device *dev, struct net_pkt *pkt)
     des3 |= TDES3_TER; // End-of-Ring
   }
 
-  desc->des0 = local_to_global(tx_buffers[cur]);
+  desc->des0 = buf_addr;
   desc->des1 = 0;
   desc->des2 = (len & 0x1FFF) | TDES2_INTERRUPT_ON_COMPLETION;
   desc->des3 = des3;
@@ -330,7 +487,7 @@ static void setup_rxdesc(uint32_t id)
 {
   DMA_DESC *desc = &MAC_DEV.rx_descs[id];
 
-  desc->des0 = local_to_global(rx_buffers[id]);
+  desc->des0 = local_to_global(rx_desc_buffer(id));
   desc->des1 = ETH_BUF_SIZE;
   desc->des2 = 0;
   desc->des3 = RDES3_OWN | RDES3_INT_ON_COMPLETION_EN | RDES3_BUFFER1_VALID_ADDR;
@@ -343,6 +500,16 @@ static void setup_rxdesc(uint32_t id)
 static void init_rx_descs(void)
 {
   uint32_t i;
+
+#if CONFIG_ETH_ALIF_ZEROCOPY_RX
+  /* Descriptors own buffers [0, RX_DESC_COUNT); the rest are spares. */
+  rx_free_top = 0;
+  for (i = 0; i < RX_DESC_COUNT; i++)
+    desc_buf_idx[i] = i;
+  for (i = RX_DESC_COUNT; i < RX_BUF_COUNT; i++)
+    rx_free_stack[rx_free_top++] = i;
+#endif
+
   for (i = 0; i < RX_DESC_COUNT; i++)
     setup_rxdesc(i);
 

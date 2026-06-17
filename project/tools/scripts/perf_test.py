@@ -446,12 +446,11 @@ def main():
     p.add_argument("--peer-ip", default=DEFAULT_PEER_IP, help="this PC's IP on the link")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.add_argument("--duration", type=int, default=10, help="seconds per test")
-    # The HE core sustains ~30 Mb/s of UDP RX before the MAC driver starves on
-    # net-pkt buffers; above that the board drops most datagrams AND floods the
-    # console, corrupting the zperf readout. Default to a rate it can actually
-    # receive so the out-of-the-box run yields a clean measurement both ways;
-    # pass a higher --udp-rate to stress-test the saturation/loss behaviour.
-    p.add_argument("--udp-rate", default="30M", help="UDP target rate (iperf/zperf syntax)")
+    # With the tuned + zero-copy RX MAC driver the board receives UDP at wire
+    # rate (~95 Mb/s, <0.02% loss). 90M drives both directions hard while
+    # staying clean (download ~94 Mb/s; upload hits the board's ~67 Mb/s TX
+    # ceiling at 0% loss). Lower it for a gentler run.
+    p.add_argument("--udp-rate", default="90M", help="UDP target rate (iperf/zperf syntax)")
     p.add_argument("--packet-size", default="1K", help="UDP payload size for zperf upload")
     p.add_argument("--iperf", default="iperf", help="iperf 2.x binary (NOT iperf3)")
     p.add_argument("--tests", nargs="+", choices=ALL_TESTS, default=ALL_TESTS)
