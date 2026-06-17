@@ -27,7 +27,7 @@ auto main() -> int
 
   while (true)
   {
-    LOG_INF("Blink from HE!");
+    LOG_DBG("Blink from HE!");
     ret = gpio_pin_toggle_dt(&led);
     if (ret < 0)
     {

@@ -13,6 +13,7 @@ RUN apt-get purge -y  \
 
 RUN apt-get update && apt-get install -y \
   curl \
+  iperf \
   udev \
   libxcb-render-util0-dev \
   libxrender1\

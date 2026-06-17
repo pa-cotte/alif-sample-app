@@ -25,7 +25,9 @@
     "--network=host" // needed for display like JLinkConfig tools
   ],
   "mounts": [
-    "type=bind,source=/dev/bus/usb,target=/dev/bus/usb"
+    "type=bind,source=/dev/bus/usb,target=/dev/bus/usb",
+    "type=bind,source=${localEnv:HOME}/.claude,target=/home/user/.claude",
+    "type=bind,source=${localEnv:HOME}/.claude.json,target=/home/user/.claude.json"
   ],
   "customizations": {
     "vscode": {
@@ -43,7 +45,8 @@
         "cheshirekow.cmake-format",
         "ms-vscode.cmake-tools",
         "ms-python.python",
-        "ms-vscode.vscode-serial-monitor"
+        "ms-vscode.vscode-serial-monitor",
+        "anthropic.claude-code"
       ],
       "settings": {
         "terminal.integrated.profiles.linux": {
