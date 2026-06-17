@@ -1,64 +1,54 @@
-# Ethernet Throughput — HE vs HP comparison
+# Ethernet Throughput — HE vs HP (tuned driver)
 
-Alif E7 DK, direct cable board ⇄ PC (192.168.0.2 ⇄ 192.168.0.1), zperf ⇄ iperf 2.x,
-10 s per test, UDP offered rate 30 Mb/s. One core at a time owns the MAC
-(HE built with Ethernet, HP built with `-DAPP_ETHERNET=ON`; the other core is
-not running Ethernet — see `project/apps/common/eth.overlay`).
+Alif E7 DK, direct cable board ⇄ PC (192.168.0.2 ⇄ 192.168.0.1), zperf ⇄ iperf
+2.x, 10 s/test. **Both cores run the same tuned Alif MAC driver** (larger RX
+DMA ring, no per-packet busy-wait, zero-copy RX) from `project/apps/common/` —
+so the differences below are pure CPU (RTSS-HE high-efficiency vs RTSS-HP
+high-performance), not driver config. One core owns the MAC at a time (HE built
+with Ethernet by default; HP with `-DAPP_ETHERNET=ON`, flashed alone).
 
-## Reliable metric — UDP
+## Results
 
-UDP is stable run-to-run, so these numbers are meaningful.
-
-| Direction | HE (RTSS-HE) | HP (RTSS-HP) | Notes |
+| Test | HE (RTSS-HE) | HP (RTSS-HP) | Notes |
 |---|---:|---:|---|
-| UDP ↑ upload   (board→PC, TX) | ~22.8 Mb/s, 0 % loss | ~22–27 Mb/s, 0 % loss | comparable, within noise |
-| UDP ↓ download (PC→board, RX) | 31.4 Mb/s, <0.5 % loss | 31.4 Mb/s, <0.1 % loss | **identical** |
+| **UDP ↓ download** (PC→board, RX) | ~62 Mb/s | **~95.7 Mb/s (wire)** | RX is CPU-bound above the ring; HP reaches 100BASE-T line rate, HE caps ~62 |
+| **UDP ↑ upload** (board→PC, TX) | ~29 Mb/s | ~67 Mb/s | copy TX path, CPU-bound; HP ~2.3× |
+| TCP ↑ upload | ~7 Mb/s | ~9 Mb/s | erratic (see below) |
+| TCP ↓ download | ~22 Mb/s | ~22 Mb/s | erratic |
 
 ```text
-UDP ↓ download   HE │████████████████████████████████│ 31.4 Mb/s
-                 HP │████████████████████████████████│ 31.4 Mb/s
-UDP ↑ upload     HE │███████████████████████░░░░░░░░░│ 22.8 Mb/s
-                 HP │█████████████████████████░░░░░░░│ ~24  Mb/s
+UDP ↓ download   HE │█████████████████████░░░░░░░░░░░│ ~62 Mb/s
+                 HP │████████████████████████████████│ ~96 Mb/s (wire)
+UDP ↑ upload     HE │██████████░░░░░░░░░░░░░░░░░░░░░░░│ ~29 Mb/s
+                 HP │███████████████████████░░░░░░░░░│ ~67 Mb/s
 ```
 
-## Unreliable metric — TCP (do not over-read)
-
-TCP throughput swings wildly between runs on **both** cores — sessions
-intermittently stall (e.g. an upload collapsing to 41 kb/s, a download from
-3 to 22 Mb/s). Likely the tiny TCP window + per-packet RX busy-wait +
-retransmissions. Single numbers are not trustworthy; ranges observed:
-
-| Direction | HE (range) | HP (range) |
-|---|---:|---:|
-| TCP ↑ upload   (board→PC) | ~7 Mb/s | 0.04 – 9.3 Mb/s |
-| TCP ↓ download (PC→board) | 3.4 – 15 Mb/s | 12 – 22 Mb/s |
-
-HP's TCP download tends higher, but the variance is too large to claim a
-firm winner.
+Both UDP measurements are stable run-to-run. UDP download loss stays <0.1 % up
+to each core's ceiling, then the board saturates (drops + console spam corrupt
+the readout).
 
 ## Takeaway
 
-Within the rates this board can actually sustain, **HE ≈ HP for Ethernet**.
-The bottleneck is the MAC driver / net-buffer RX path (the board starves on
-`net_pkt_rx_alloc_with_buffer()` above ~30 Mb/s), not CPU horsepower — so
-moving to the higher-performance core does not raise throughput here. A real
-CPU-bound difference would only show above the ~31 Mb/s RX ceiling, which the
-driver cannot reach today.
+After tuning, Ethernet throughput **scales with the core**: HP is ~1.5× (RX) to
+~2.3× (TX) faster than HE, because the remaining bottleneck is per-packet CPU
+(net-stack + socket-layer copy), which the driver tuning cannot remove. HP hits
+the 100BASE-T wire on RX; HE tops out ~62 Mb/s.
 
-If a core difference matters, the lever is the **RX path** (bigger/zero-copy
-buffers, DMA-to-netbuf, dropping the `CONFIG_ETH_ALIF_RX_DELAY_US` busy-wait),
-not the core choice.
+Pick the core by need: **HP for max Ethernet throughput**, HE when its lower
+power/clock is preferred and ~60 Mb/s RX / ~30 Mb/s TX is enough.
 
-## How to reproduce
+## TCP
+
+TCP stays erratic on both cores (sessions intermittently stall — tiny window /
+retransmits); single numbers aren't trustworthy. Not addressed by the driver
+work; see perf_tuning.md.
+
+## Reproduce
 
 ```sh
-# HE benchmark (Ethernet is default-ON for HE)
+# HE (Ethernet default-ON): build, erase+flash HE only, serial routing -> HE (uart2)
 west build -p always -b alif_e7_dk/ae722f80f55d5xx/rtss_he project/apps/he_app -d build/he
-#  ... flash HE only, set serial routing to HE (uart2), then:
-./project/tools/scripts/perf_test.py
-
-# HP benchmark (Ethernet is opt-in for HP; flash HP only so HE never co-drives the MAC)
+# HP (Ethernet opt-in): build with the flag, erase+flash HP only, serial routing -> HP (uart4)
 west build -p always -b alif_e7_dk/ae722f80f55d5xx/rtss_hp project/apps/hp_app -d build/hp -- -DAPP_ETHERNET=ON
-#  ... erase + flash HP only, set serial routing to HP (uart4), then:
-./project/tools/scripts/perf_test.py
+./project/tools/scripts/perf_test.py        # then run the matrix
 ```
