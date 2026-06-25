@@ -1,3 +1,4 @@
 menu "Drivers"
 rsource "eth/Kconfig"
+rsource "sensor/ma780/Kconfig"
 endmenu

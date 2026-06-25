@@ -1,1 +1,2 @@
 add_subdirectory_ifdef(CONFIG_ETH_ALIF eth)
+add_subdirectory_ifdef(CONFIG_MA780 sensor/ma780)

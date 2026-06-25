@@ -1,0 +1,50 @@
+/*
+ * Repro SPI3 / MA780 — highlight the "write-with-check fails after 3 attempts"
+ * issue observed in dual-core operation, to report to Alif support.
+ *
+ * SPI3 is wired here exactly as in the reference (target pjsc) firmware:
+ *   - same controller (spi3 @ 0x48106000, DesignWare)
+ *   - same pins (SPI3_A): MISO=P12_4, MOSI=P12_5, SCLK=P12_6, SS0=P12_7
+ *   - same MA780 node config (4 MHz, mode 0, 8-bit, MSB first)
+ *
+ * On the E7 DevKit these SPI3_A pins are routed to the mikroBUS / Click socket
+ * (CLICK_MISO/MOSI/SCLK/SS), so the MA780 can be connected there directly.
+ */
+
+/ {
+	aliases {
+		angle-sensor = &ma780;
+	};
+};
+
+/* SPI3 controller for the MA780 angle encoder */
+&spi3 {
+	status = "okay";
+	pinctrl-0 = <&pinctrl_spi3>;
+	pinctrl-1 = <&pinctrl_spi3_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	ma780: spi-dev-ma780@0 {
+		status = "okay";
+		compatible = "mps,ma780";
+		reg = <0>;
+		spi-max-frequency = <4000000>;
+	};
+};
+
+/*
+ * Override the board default pinctrl_spi3: the stock definition routes MISO to
+ * P10_5 (SPI3_MISO_B). The reference HW (and the DevKit mikroBUS socket) use
+ * P12_4 (SPI3_MISO_A), so move MISO onto the A variant.
+ */
+&pinctrl {
+	pinctrl_spi3: pinctrl_spi3 {
+		group0 {
+			pinmux = < PIN_P12_4__SPI3_MISO_A >,
+				 < PIN_P12_5__SPI3_MOSI_A >,
+				 < PIN_P12_6__SPI3_SCLK_A >,
+				 < PIN_P12_7__SPI3_SS0_A >;
+			read-enable = < 0x1 >;
+		};
+	};
+};
