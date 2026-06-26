@@ -15,6 +15,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/usbd.h>
+#include <zephyr/usb/usbd_msg.h>
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/fs/fs.h>
 #include <stdio.h>
@@ -59,9 +60,113 @@ FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(storage);
 #define STORAGE_PARTITION_ID		FIXED_PARTITION_ID(STORAGE_PARTITION)
 
 static struct fs_mount_t fs_mnt;
+static bool fs_mounted;
+
+static int mount_app_fs(struct fs_mount_t *mnt);
+
+/*
+ * The USB host accesses the disk at the block level, bypassing the device-side
+ * file system. Two file-system owners on the same OSPI flash break host access
+ * and risk FAT corruption, so the device keeps its FATFS unmounted while the
+ * host is connected and mounts it only while the host is away.
+ */
+static int mount_fs(void)
+{
+	int rc;
+
+	if (fs_mounted) {
+		return 0;
+	}
+
+	rc = mount_app_fs(&fs_mnt);
+	if (rc == 0) {
+		fs_mounted = true;
+	}
+
+	return rc;
+}
+
+static int unmount_fs(void)
+{
+	int rc;
+
+	if (!fs_mounted) {
+		return 0;
+	}
+
+	rc = fs_unmount(&fs_mnt);
+	if (rc == 0) {
+		fs_mounted = false;
+	}
+
+	return rc;
+}
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 static struct usbd_context *sample_usbd;
+
+/*
+ * The FS refresh runs on its own work queue, not the system one: remounting the
+ * OSPI flash uses a deep call stack that overflows the small sysworkq stack.
+ */
+#define FS_REFRESH_STACK_SIZE	8192
+#define FS_REFRESH_PRIORITY	5
+static K_THREAD_STACK_DEFINE(fs_refresh_stack, FS_REFRESH_STACK_SIZE);
+static struct k_work_q fs_refresh_q;
+
+/* 1 while the USB host owns the disk (keep device FATFS unmounted), 0 otherwise. */
+static atomic_t fs_host_owns_disk;
+
+/* Reconciles the mount state to whoever owns the disk, off the workqueue. */
+static void fs_sync_work_handler(struct k_work *work)
+{
+	int rc;
+
+	if (atomic_get(&fs_host_owns_disk)) {
+		rc = unmount_fs();
+		if (rc < 0) {
+			LOG_ERR("Unmount for USB host access failed: %d", rc);
+		} else {
+			LOG_INF("FS released to USB host");
+		}
+	} else {
+		rc = mount_fs();
+		if (rc < 0) {
+			LOG_ERR("Mount after USB disconnect failed: %d", rc);
+		} else {
+			LOG_INF("FS mounted for inspection (%s)", fs_mnt.mnt_point);
+		}
+	}
+}
+
+static K_WORK_DEFINE(fs_sync_work, fs_sync_work_handler);
+
+static void usb_msg_cb(struct usbd_context *const ctx,
+		       const struct usbd_msg *const msg)
+{
+	LOG_DBG("USBD message: %s", usbd_msg_type_string(msg->type));
+
+	/*
+	 * Hand the disk to whoever is using it. While the host is connected it
+	 * owns the block device, so the device-side FATFS must stay unmounted.
+	 * Once the host is unplugged (VBUS removed), mount so host-written files
+	 * can be inspected. The actual mount/unmount runs on a dedicated work
+	 * queue because the callback runs on the shared system workqueue and an
+	 * OSPI mount uses a deep, blocking call stack.
+	 */
+	switch (msg->type) {
+	case USBD_MSG_VBUS_READY:
+		atomic_set(&fs_host_owns_disk, 1);
+		k_work_submit_to_queue(&fs_refresh_q, &fs_sync_work);
+		break;
+	case USBD_MSG_VBUS_REMOVED:
+		atomic_set(&fs_host_owns_disk, 0);
+		k_work_submit_to_queue(&fs_refresh_q, &fs_sync_work);
+		break;
+	default:
+		break;
+	}
+}
 
 #if CONFIG_DISK_DRIVER_RAM
 USBD_DEFINE_MSC_LUN(ram, "RAM", "Zephyr", "RAMDisk", "0.00");
@@ -79,7 +184,7 @@ static int enable_usb_device_next(void)
 {
 	int err;
 
-	sample_usbd = sample_usbd_init_device(NULL);
+	sample_usbd = sample_usbd_init_device(usb_msg_cb);
 	if (sample_usbd == NULL) {
 		LOG_ERR("Failed to initialize USB device");
 		return -ENODEV;
@@ -175,7 +280,7 @@ static void setup_disk(void)
 		return;
 	}
 
-	rc = mount_app_fs(mp);
+	rc = mount_fs();
 	if (rc < 0) {
 		LOG_ERR("Failed to mount filesystem");
 		return;
@@ -225,43 +330,44 @@ static void setup_disk(void)
 
 	(void)fs_closedir(&dir);
 
+	/*
+	 * Leave the disk formatted but unmounted so the USB host gets exclusive
+	 * ownership when it connects (see usb_msg_cb).
+	 */
+	unmount_fs();
+
 	return;
 }
 
 #if defined(CONFIG_SHELL)
 /*
- * The USB host accesses the disk at the block level, bypassing the device-side
- * file system. After the host copies files (and flushes/ejects), the device
- * FATFS still holds a stale FAT/directory cache from mount time. This command
- * drops that cache and re-reads the disk so host-written files become visible.
+ * Force a fresh mount for inspection without unplugging the cable. Note that
+ * while the USB host is connected it owns the disk, so this temporarily takes
+ * ownership on the device side; do not write from both sides at once.
  */
 static int cmd_remount(const struct shell *sh, size_t argc, char **argv)
 {
 	int rc;
 
 	if (fs_mnt.mnt_point == NULL) {
-		shell_error(sh, "No file system was mounted at boot");
+		shell_error(sh, "No file system was set up at boot");
 		return -ENODEV;
 	}
 
-	rc = fs_unmount(&fs_mnt);
-	if (rc < 0 && rc != -EINVAL) {
-		shell_error(sh, "unmount failed: %d", rc);
-		return rc;
-	}
+	(void)unmount_fs();
 
-	rc = fs_mount(&fs_mnt);
+	rc = mount_fs();
 	if (rc < 0) {
-		shell_error(sh, "mount failed: %d", rc);
+		shell_error(sh, "remount failed: %d", rc);
 		return rc;
 	}
 
-	shell_print(sh, "Remounted %s (disk re-read)", fs_mnt.mnt_point);
+	shell_print(sh, "Mounted %s (disk re-read)", fs_mnt.mnt_point);
 	return 0;
 }
 
 SHELL_CMD_REGISTER(remount, NULL,
-		   "Re-read the disk FS to see files written by the USB host",
+		   "Mount/re-read the disk FS to see files written by the USB host",
 		   cmd_remount);
 #endif /* CONFIG_SHELL */
 
@@ -272,6 +378,11 @@ int main(void)
 	setup_disk();
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+	k_work_queue_init(&fs_refresh_q);
+	k_work_queue_start(&fs_refresh_q, fs_refresh_stack,
+			   K_THREAD_STACK_SIZEOF(fs_refresh_stack),
+			   FS_REFRESH_PRIORITY, NULL);
+
 	ret = enable_usb_device_next();
 #else
 	ret = usb_enable(NULL);
