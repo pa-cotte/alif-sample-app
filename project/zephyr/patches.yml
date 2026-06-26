@@ -1,0 +1,17 @@
+# Patches applied to west modules by `west patch apply` (see tools/scripts/update.py).
+patches:
+  - path: zephyr/udc-dwc3-reset-to-default-state.patch
+    sha256sum: 5600e21473b0dbcb0456465dbc75510c54087a8d278f945c5cc9c6365781cc34
+    module: zephyr
+    author: Sebastien Rabaud
+    email: sebastien-rabaud@users.noreply.github.com
+    date: 2026-06-26
+    upstreamable: true
+    comments: |
+      The DWC3 UDC bus-reset handler resets the hardware device address but not
+      the driver's config_state, so after a configuration/addressing the next
+      SET_ADDRESS(0) following a bus reset is rejected with "address can't set
+      from Configured State". The host then loops on bus reset and USB
+      enumeration never completes (USB mass storage device never appears).
+      Reset config_state to USB_DWC3_STATE_DEFAULT on bus reset per USB 2.0
+      section 9.1.1.
