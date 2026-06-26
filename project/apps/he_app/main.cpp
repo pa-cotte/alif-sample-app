@@ -19,6 +19,10 @@
 #include <zephyr/fs/fs.h>
 #include <stdio.h>
 
+#if defined(CONFIG_SHELL)
+#include <zephyr/shell/shell.h>
+#endif
+
 /*
  * sample_usbd.h (samples/subsys/usb/common) has no extern "C" guard and pulls
  * in C++-incompatible templated headers, so we declare the helpers it provides
@@ -51,7 +55,7 @@ FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(storage);
 #error No supported disk driver enabled
 #endif
 
-#define STORAGE_PARTITION		storage_partition
+#define STORAGE_PARTITION		ospi_storage
 #define STORAGE_PARTITION_ID		FIXED_PARTITION_ID(STORAGE_PARTITION)
 
 static struct fs_mount_t fs_mnt;
@@ -223,6 +227,43 @@ static void setup_disk(void)
 
 	return;
 }
+
+#if defined(CONFIG_SHELL)
+/*
+ * The USB host accesses the disk at the block level, bypassing the device-side
+ * file system. After the host copies files (and flushes/ejects), the device
+ * FATFS still holds a stale FAT/directory cache from mount time. This command
+ * drops that cache and re-reads the disk so host-written files become visible.
+ */
+static int cmd_remount(const struct shell *sh, size_t argc, char **argv)
+{
+	int rc;
+
+	if (fs_mnt.mnt_point == NULL) {
+		shell_error(sh, "No file system was mounted at boot");
+		return -ENODEV;
+	}
+
+	rc = fs_unmount(&fs_mnt);
+	if (rc < 0 && rc != -EINVAL) {
+		shell_error(sh, "unmount failed: %d", rc);
+		return rc;
+	}
+
+	rc = fs_mount(&fs_mnt);
+	if (rc < 0) {
+		shell_error(sh, "mount failed: %d", rc);
+		return rc;
+	}
+
+	shell_print(sh, "Remounted %s (disk re-read)", fs_mnt.mnt_point);
+	return 0;
+}
+
+SHELL_CMD_REGISTER(remount, NULL,
+		   "Re-read the disk FS to see files written by the USB host",
+		   cmd_remount);
+#endif /* CONFIG_SHELL */
 
 int main(void)
 {
