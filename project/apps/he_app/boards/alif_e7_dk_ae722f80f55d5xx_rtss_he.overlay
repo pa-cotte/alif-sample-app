@@ -1,57 +1,31 @@
-&pinctrl {
-	pinctrl_eth0: pinctrl_eth0 {
-		#pinctrl-state-cells = <0>;
-		#pinctrl-cells = <1>;
-		group0 {
-			pinmux = <
-			PIN_P6_0__ETH_TXD0_A
-			PIN_P10_5__ETH_TXD1_B
-			PIN_P10_6__ETH_TXEN_B
-			PIN_P11_0__ETH_REFCLK_B
-			PIN_P11_1__ETH_MDIO_B
-			PIN_P11_2__ETH_MDC_B
-			PIN_P11_3__ETH_RXD0_B
-			PIN_P11_4__ETH_RXD1_B
-			PIN_P11_5__ETH_CRS_DV_B
-			PIN_P11_6__ETH_RST_B
-			PIN_P11_7__ETH_IRQ_B
-			>;
-		};
-	};
+/*
+ * SPDX-FileCopyrightText: Copyright Alif Semiconductor
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * USB Mass Storage overlay for the Alif E7 DK (RTSS-HE):
+ *  - enable the DWC3 USB device controller and gate its PHY power on,
+ *  - declare a 96 KiB RAM-backed disk exposed as the MSC LUN "RAM".
+ */
+
+#include <dt-bindings/misc/alif_aipm_common.h>
+
+&aipm_run_default {
+	phy-pwr-gating = <ALIF_PHY_GATE_USB_MASK>;
+};
+
+&ns {
+	status = "okay";
+};
+
+zephyr_udc0: &usb {
+	status = "okay";
 };
 
 / {
-	aliases {
-		ethernet0 = &eth_alif;
-	};
-
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		
-		ethphy: ethernet-phy@1 {
-			reg = <1>;
-			compatible = "ethernet-phy-ieee802.3-c22";
-			micrel,led-mode = <1>;
-		};
-	};
-
-    eth_alif: ethernet@48100000 {
-		compatible = "zephyr,eth-alif";
-		reg = <0x48100000 0x10000>;  /* Base address + size */
-		interrupt-parent = <&nvic>;
-		interrupts = <148 0>;  /* ETH_SBD_IRQ */
-		status = "okay";
-		label = "eth_alif";
-		mac-address = [00 16 3E 11 22 33];
-		pinctrl-0 = <&pinctrl_eth0>;
-		pinctrl-names = "default";
-		phy-handle = <&ethphy>;
-	};
-
-    dma_sram: sram@08000000{
-		compatible = "zephyr,memory-region", "mmio-sram";
-		reg = <0x08000000 0x00010000>;
-		zephyr,memory-region = "ETH_DMA";
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <192>;
 	};
 };

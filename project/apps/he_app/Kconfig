@@ -1,3 +1,7 @@
+# Source common USB sample options (CONFIG_SAMPLE_USBD_*) used to configure the
+# new experimental USB device stack via samples/subsys/usb/common.
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
 menu "Zephyr"
 source "Kconfig.zephyr"
 endmenu

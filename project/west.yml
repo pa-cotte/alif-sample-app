@@ -22,6 +22,7 @@ manifest:
           - liblc3
           - mbedtls
           - littlefs
+          - fatfs
           - hal_nordic
           - tinycrypt
           - open-amp

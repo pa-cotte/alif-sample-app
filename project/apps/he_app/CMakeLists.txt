@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13.1)
+cmake_minimum_required(VERSION 3.20.0)
 
 set(EXTRA_CONF_FILE ../../base.conf)
 
@@ -13,6 +13,10 @@ zephyr_compile_options($<$<COMPILE_LANGUAGE:CXX>:$<TARGET_PROPERTY:compiler,warn
 
 project(he_app)
 
+# Pulls in the USB sample helper (sample_usbd_init.c) used by the USB device
+# "next" stack, and adds samples/subsys/usb/common to the include path.
+include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
+
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-target_sources(app PRIVATE main.cpp )
+target_sources(app PRIVATE main.cpp)
