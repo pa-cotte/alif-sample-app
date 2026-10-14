@@ -1,0 +1,97 @@
+# Patches applied to west modules by `west patch apply` (see tools/scripts/update.py).
+#
+# The first two are prerequisites, applied in every build: without them the CDC-ECM link does not
+# work at all on the E7 (endpoint pool out of the controller's reach, enumeration looping after a
+# bus reset). The last two are the fixes this sample demonstrates; `update.py --without-fixes`
+# leaves them out to reproduce the failures.
+patches:
+- path: zephyr/usb-cdc-ecm-ep-pool-in-non-secure0.patch
+  sha256sum: 34e06cf53b31171c1c68e34ecbfc419c6c5f81d78b840974dd6819bf94ff138f
+  module: zephyr
+  author: jeremie patron
+  email: jeremie.patron@pa.cotte.fr
+  date: 2026-09-16
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: soc/alif/ensemble/common/alif_ns.ld routes the USB endpoint data
+    pools into NON_SECURE0, which is where the DWC3 can reach them as a bus
+    master. It lists cdc_acm and msc but omits cdc_ecm, so
+    net_buf_data_cdc_ecm_ep_pool stays in the default RAM. On RTSS-HP that RAM
+    is the DTCM (chosen zephyr,sram = &dtcm), whose local address the DWC3
+    cannot reach.
+    SYMPTOM: enumeration succeeds and the CDC-ECM carrier comes up, because EP0
+    uses kheap_buf_net_buf_mem_pool_udc_ep_pool which the fragment does place in
+    NON_SECURE0. Every bulk transfer is then silently lost: zero frames in each
+    direction, ARP never resolves, and no error is reported anywhere.
+    FIX: route .bss.net_buf_data_cdc_ecm_ep_pool to NON_SECURE0 as well.
+- path: zephyr/udc-dwc3-reset-to-default-state.patch
+  sha256sum: 5600e21473b0dbcb0456465dbc75510c54087a8d278f945c5cc9c6365781cc34
+  module: zephyr
+  author: Sebastien Rabaud
+  email: sebastien-rabaud@users.noreply.github.com
+  date: 2026-06-26
+  upstreamable: true
+  comments: |
+    The DWC3 UDC bus-reset handler resets the hardware device address but not
+    the driver's config_state, so after a configuration/addressing the next
+    SET_ADDRESS(0) following a bus reset is rejected with "address can't set
+    from Configured State". The host then loops on bus reset and USB
+    enumeration never completes (USB mass storage device never appears).
+    Reset config_state to USB_DWC3_STATE_DEFAULT on bus reset per USB 2.0
+    section 9.1.1.
+- path: zephyr/udc-dwc3-report-reset-after-connect-done.patch
+  sha256sum: 63ec2220b67f0abf87f2e6c46421d645be9710ae4a54d9eda0d88d76b087c27d
+  module: zephyr
+  author: Basile GRUNER
+  email: basile.gruner.ext@pa.cotte.fr
+  date: 2026-10-05
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: usbd_core reads the bus speed with udc_device_speed() when it
+    handles UDC_EVT_RESET, and selects from it the configuration
+    descriptors, the endpoint sizes and the CDC-ECM packet size. udc_dwc3
+    submitted UDC_EVT_RESET at USB_EVENT_RESET, but only learns the
+    negotiated speed at USB_EVENT_CONNECT_DONE, which the controller raises
+    after the reset. The stack therefore read the previous speed, or the
+    high-speed default set at init (max_speed == 2).
+    SYMPTOM: on a full-speed link (STM32 OTG_FS host) the E7 device
+    announced 512-byte bulk endpoints, sent no zero-length packet after a
+    frame that is a multiple of 64 bytes (448, 576 bytes: frame never
+    terminated on the wire), and after a SET_INTERFACE sent packets longer
+    than 64 bytes (babble on the host). Observed on two E7-based boards.
+    FIX: invoke the reset callback (dwc3_reset_cb, which submits
+    UDC_EVT_RESET) on USB_EVENT_CONNECT_DONE, right after
+    udc_dwc3_connection_done_event() has read DSTS, instead of on
+    USB_EVENT_RESET. USB_EVENT_RESET keeps the controller-side reset
+    (udc_dwc3_reset_event()). This follows the E7 HWRM v2.8, 15.10.5.2.1
+    (USB Reset starts the reset, Connection Done ends it and is where the
+    speed is read) and what the STM32 HAL does for udc_stm32: it calls
+    HAL_PCD_ResetCallback() on ENUMDNE, not on USBRST. Not fixed in
+    zephyr_alif v2.4.0 nor main (83ab981e7e, 2026-09-28).
+- path: zephyr/udc-dwc3-bulk-in-zlp.patch
+  sha256sum: f0c4028e601aff453353e439567a9096abda7cd4105ef46ea2a5f0923098b669
+  module: zephyr
+  author: Basile GRUNER
+  email: basile.gruner.ext@pa.cotte.fr
+  date: 2026-10-05
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: a class marks an IN buffer with udc_ep_buf_set_zlp() when the
+    transfer must end with a zero-length packet; usbd_cdc_ecm does it for a
+    frame whose length is a multiple of the bulk IN packet size. udc_dwc3
+    never read the flag (no udc_ep_buf_has_zlp() call) and sent the data
+    only.
+    SYMPTOM: on a full-speed link, a 448, 512 or 576-byte Ethernet frame
+    went out as 7, 8 or 9 full packets followed by NAKs (bus capture): the
+    host could not find the end of the frame and merged it with the next
+    one, so pings of those sizes failed or took hundreds of milliseconds.
+    Requires udc-dwc3-report-reset-after-connect-done.patch, without which
+    the class computed the multiple against 512 instead of 64.
+    FIX: in handle_data_in(), when the completed bulk IN buffer carries the
+    flag, clear it, send a zero-length packet and keep the buffer at the
+    head of the queue; it completes on the ZLP's own completion. Relies on
+    one IN buffer in flight per endpoint, which usbd_cdc_ecm guarantees
+    (it waits on sync_sem after each enqueue).

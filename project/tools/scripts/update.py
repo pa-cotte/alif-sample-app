@@ -20,12 +20,15 @@ Usage:
     ./tools/scripts/update.py               # update + patch + blobs
     ./tools/scripts/update.py --no-blobs    # skip blob fetch (faster, no BLE/WiFi)
     ./tools/scripts/update.py --no-patch    # west update only
+    ./tools/scripts/update.py --without-fixes  # prerequisites only, without the fixes
+                                               # demonstrated by this branch
 """
 
 import argparse
 import hashlib
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -91,10 +94,30 @@ def west_update() -> None:
     run(["west", "update", "--fetch-opt=--filter=tree:0", "--fetch-opt=--depth=1"])
 
 
-def apply_patches() -> None:
+# The fixes this branch demonstrates. `--without-fixes` leaves them out so that the failures they
+# fix can be reproduced; the other entries of patches.yml are prerequisites and stay applied.
+DEMONSTRATED_FIXES = [
+    "zephyr/udc-dwc3-report-reset-after-connect-done.patch",
+    "zephyr/udc-dwc3-bulk-in-zlp.patch",
+]
+
+
+def apply_patches(without_fixes: bool = False) -> None:
     # west patch defaults: manifest_dir/zephyr/patches.yml + manifest_dir/zephyr/patches/
     # manifest_dir = project/ (the manifest project root) — matches our layout exactly.
-    run(["west", "patch", "apply"])
+    if not without_fixes:
+        run(["west", "patch", "apply"])
+        return
+
+    import yaml  # shipped with west
+
+    patches_yml = REPO_ROOT / "project" / "zephyr" / "patches.yml"
+    manifest = yaml.safe_load(patches_yml.read_text())
+    manifest["patches"] = [p for p in manifest["patches"] if p["path"] not in DEMONSTRATED_FIXES]
+    with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as filtered:
+        yaml.safe_dump(manifest, filtered, sort_keys=False)
+    print(f"applying patches without {', '.join(DEMONSTRATED_FIXES)}", flush=True)
+    run(["west", "patch", "--patch-yml", filtered.name, "apply"])
 
 
 def _fetch_blob_set(blobs: list[dict], blobs_root: Path, label: str) -> None:
@@ -154,6 +177,11 @@ def main() -> int:
         help="Skip patch application (west update only)",
     )
     parser.add_argument(
+        "--without-fixes",
+        action="store_true",
+        help="Apply the prerequisites only, leaving out the fixes this branch demonstrates",
+    )
+    parser.add_argument(
         "--no-blobs",
         action="store_true",
         help="Skip blob fetch (faster, BLE/WiFi firmware will be missing)",
@@ -164,7 +192,7 @@ def main() -> int:
 
     if not args.no_patch:
         reset_modules_to_clean_state()
-        apply_patches()
+        apply_patches(args.without_fixes)
 
     if not args.no_blobs and not args.no_patch:
         fetch_blobs()

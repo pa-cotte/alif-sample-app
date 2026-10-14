@@ -1,0 +1,21 @@
+diff --git a/drivers/usb/udc/udc_dwc3.c b/drivers/usb/udc/udc_dwc3.c
+index 33ce5e93..229e3ef1 100644
+--- a/drivers/usb/udc/udc_dwc3.c
++++ b/drivers/usb/udc/udc_dwc3.c
+@@ -872,13 +872,13 @@ static void udc_dwc3_devt_handler(udc_dwc3_driver_t *drv, uint32_t reg)
+ 	case USB_EVENT_EOPF:
+ 		break;
+ 	case USB_EVENT_RESET:
+ 		udc_dwc3_reset_event(drv);
+-		if (drv->udc_dwc3_device_reset_cb != NULL) {
+-			drv->udc_dwc3_device_reset_cb(drv);
+-		}
+ 		break;
+ 	case USB_EVENT_CONNECT_DONE:
+ 		udc_dwc3_connection_done_event(drv);
++		if (drv->udc_dwc3_device_reset_cb != NULL) {
++			drv->udc_dwc3_device_reset_cb(drv);
++		}
+ 		if (drv->udc_dwc3_connect_cb != NULL) {
+ 			drv->udc_dwc3_connect_cb(drv);
+ 		}

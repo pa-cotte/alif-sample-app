@@ -1,0 +1,20 @@
+diff --git a/drivers/usb/udc/udc_dwc3.c b/drivers/usb/udc/udc_dwc3.c
+index 229e3ef1..cefa2e64 100644
+--- a/drivers/usb/udc/udc_dwc3.c
++++ b/drivers/usb/udc/udc_dwc3.c
+@@ -2329,6 +2329,15 @@ static void handle_data_in(struct udc_dwc3_data *priv, uint8_t epnum)
+ 		return;
+ 	}
+ 
++	if (ep != USB_CONTROL_EP_IN && udc_ep_buf_has_zlp(buf)) {
++		udc_ep_buf_clear_zlp(buf);
++		if (udc_dwc3_bulk_send(&priv->drv, epnum, USB_DIR_IN, buf->__buf, 0) == 0) {
++			udc_ep_set_busy(dev, ep, true);
++			return;
++		}
++		LOG_ERR("Failed to send ZLP on ep 0x%02x", ep);
++	}
++
+ 	udc_buf_get(dev, ep);
+ 	if (ep == USB_CONTROL_EP_IN) {
+ 		if (udc_ctrl_stage_is_status_in(dev) || udc_ctrl_stage_is_no_data(dev)) {

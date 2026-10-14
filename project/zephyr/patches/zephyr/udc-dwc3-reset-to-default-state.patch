@@ -1,0 +1,19 @@
+diff --git a/drivers/usb/udc/udc_dwc3.c b/drivers/usb/udc/udc_dwc3.c
+index 33ce5e93..85cb66c4 100644
+--- a/drivers/usb/udc/udc_dwc3.c
++++ b/drivers/usb/udc/udc_dwc3.c
+@@ -849,6 +849,14 @@ static void udc_dwc3_reset_event(udc_dwc3_driver_t *drv)
+ 	reg = drv->regs->DCFG;
+ 	reg &= ~(USB_DCFG_DEVADDR_MASK);
+ 	drv->regs->DCFG = reg;
++
++	/*
++	 * A bus reset returns the device to the Default state (USB 2.0 9.1.1).
++	 * Without this, config_state stays at ADDRESS/CONFIGURED and the next
++	 * SET_ADDRESS is rejected ("address can't set from Configured State"),
++	 * which makes the host loop on bus reset and enumeration never completes.
++	 */
++	drv->config_state = USB_DWC3_STATE_DEFAULT;
+ }
+ 
+ /* Device specific events   */
