@@ -1,0 +1,28 @@
+diff --git a/drivers/usb/common/usb_dwc3_hw.h b/drivers/usb/common/usb_dwc3_hw.h
+--- a/drivers/usb/common/usb_dwc3_hw.h
++++ b/drivers/usb/common/usb_dwc3_hw.h
+@@ -122,6 +122,7 @@
+ #define USB_DCFG_DEVADDR_MASK                            USB_DCFG_DEVADDR(USB_DCFG_SET_ADDR_MSK)
+ #define USB_DCFG_SPEED_MASK                              7
+ #define USB_DCFG_HIGHSPEED                               0
++#define USB_DCFG_FULLSPEED                               1U
+ #define USB_DCFG_LOWSPEED                                1U
+ #define USB_DCFG_NUMP_POS                                17
+ #define USB_DCFG_NUMP_MSK                                0x3E0000
+diff --git a/drivers/usb/udc/udc_dwc3.c b/drivers/usb/udc/udc_dwc3.c
+--- a/drivers/usb/udc/udc_dwc3.c
++++ b/drivers/usb/udc/udc_dwc3.c
+@@ -1274,7 +1274,12 @@
+ 
+ 	reg = drv->regs->DCFG;
+ 	reg &= ~(USB_DCFG_SPEED_MASK);
+-	reg |= USB_DCFG_HIGHSPEED;
++	/*
++	 * TEST ONLY: limit the controller to full speed (DCFG.DEVSPD = 1), so that the
++	 * link runs at 12 Mb/s on a high-speed host port, as behind a USB 1.1 hub.
++	 * max_speed and the high-speed default of priv->speed are left as they are.
++	 */
++	reg |= USB_DCFG_FULLSPEED;
+ 	drv->regs->DCFG = reg;
+ }
+ 

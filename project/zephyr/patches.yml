@@ -2,8 +2,9 @@
 #
 # The first two are prerequisites, applied in every build: without them the CDC-ECM link does not
 # work at all on the E7 (endpoint pool out of the controller's reach, enumeration looping after a
-# bus reset). The last two are the fixes this sample demonstrates; `update.py --without-fixes`
-# leaves them out to reproduce the failures.
+# bus reset). The next two are the fixes this sample demonstrates; `update.py --without-fixes`
+# leaves them out to reproduce the failures. The last one is a test patch, applied only with
+# `update.py --force-full-speed`.
 patches:
 - path: zephyr/usb-cdc-ecm-ep-pool-in-non-secure0.patch
   sha256sum: 34e06cf53b31171c1c68e34ecbfc419c6c5f81d78b840974dd6819bf94ff138f
@@ -95,3 +96,29 @@ patches:
     head of the queue; it completes on the ZLP's own completion. Relies on
     one IN buffer in flight per endpoint, which usbd_cdc_ecm guarantees
     (it waits on sync_sem after each enqueue).
+- path: zephyr/udc-dwc3-force-full-speed.patch
+  sha256sum: df4e52dbb3f067f2c7088216c35f48a1248c2c4c03707ada217de1a68083834c
+  module: zephyr
+  author: Basile GRUNER
+  email: basile.gruner.ext@pa.cotte.fr
+  date: 2026-10-16
+  upstreamable: false
+  apply-command: git apply
+  comments: |
+    TEST ONLY, applied with `update.py --force-full-speed`.
+    CONTEXT: udc_dwc3_set_speed() always writes DCFG.DEVSPD = high speed, and
+    the host ports of the test PC are all xHCI, which offer no way to run a
+    port at full speed. Without a USB 1.1 hub the full-speed case of
+    udc-dwc3-report-reset-after-connect-done.patch cannot be shown.
+    CHANGE: write DCFG.DEVSPD = 1 (full speed) instead. The controller then
+    does not chirp, the host runs the link at 12 Mb/s and DSTS.CONNECTSPD
+    reads full speed at Connect Done, as behind a full-speed hub.
+    max_speed (devicetree maximum-speed = "high-speed") is unchanged, so
+    caps.hs and the high-speed default of priv->speed stay as in a normal
+    build: the bug of the reset reported before Connect Done remains visible.
+    Setting maximum-speed = "full-speed" in the devicetree instead would make
+    the stack start in full speed and hide that bug, and would still leave
+    DCFG.DEVSPD at high speed.
+    The value 1 = full speed follows DSTS.CONNECTSPD (USB_DSTS_FULLSPEED = 1)
+    and the Linux dwc3 driver (DWC3_DCFG_FULLSPEED); usb_dwc3_hw.h names the
+    same value USB_DCFG_LOWSPEED, hence the new USB_DCFG_FULLSPEED macro.

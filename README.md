@@ -24,7 +24,8 @@ frame length against 512 instead of 64 and never asks for the ZLP.
 Two more patches are applied in every build, because the link does not work at all without them:
 `usb-cdc-ecm-ep-pool-in-non-secure0.patch` (the CDC-ECM endpoint buffers must live in `NON_SECURE0`
 for the controller to reach them) and `udc-dwc3-reset-to-default-state.patch` (enumeration loops after
-a bus reset). All four are described in [`project/zephyr/patches.yml`](project/zephyr/patches.yml).
+a bus reset). A fifth one, `udc-dwc3-force-full-speed.patch`, is a test patch applied only with
+`update.py --force-full-speed`. All five are described in [`project/zephyr/patches.yml`](project/zephyr/patches.yml).
 
 ### Setup
 
@@ -32,6 +33,9 @@ a bus reset). All four are described in [`project/zephyr/patches.yml`](project/z
 - High-speed link: plug the board directly into the PC.
 - Full-speed link: plug it through a full-speed-only (USB 1.1) hub; the first issue only shows on a
   full-speed link.
+- Full-speed link without a USB 1.1 hub: add `--force-full-speed` to the `update.py` calls below, then
+  rebuild and flash. Combine it with `--without-fixes` to reproduce the failures, leave 
+  if `--without-fixes` out to check the fixes.
 
 ### Running the demonstration
 

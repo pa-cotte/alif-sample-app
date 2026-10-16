@@ -22,6 +22,8 @@ Usage:
     ./tools/scripts/update.py --no-patch    # west update only
     ./tools/scripts/update.py --without-fixes  # prerequisites only, without the fixes
                                                # demonstrated by this branch
+    ./tools/scripts/update.py --force-full-speed  # also limit the USB controller to full
+                                                  # speed (test patch, no USB 1.1 hub needed)
 """
 
 import argparse
@@ -101,23 +103,34 @@ DEMONSTRATED_FIXES = [
     "zephyr/udc-dwc3-bulk-in-zlp.patch",
 ]
 
+# Test patch limiting the USB controller to full speed, applied only with `--force-full-speed`.
+FORCE_FULL_SPEED = "zephyr/udc-dwc3-force-full-speed.patch"
 
-def apply_patches(without_fixes: bool = False) -> None:
+
+def apply_patches(without_fixes: bool = False, force_full_speed: bool = False) -> None:
     # west patch defaults: manifest_dir/zephyr/patches.yml + manifest_dir/zephyr/patches/
     # manifest_dir = project/ (the manifest project root) — matches our layout exactly.
-    if not without_fixes:
-        run(["west", "patch", "apply"])
-        return
-
+    # patches.yml is filtered to a temporary copy; the patch files are still read from
+    # project/zephyr/patches/ (the default patch base).
     import yaml  # shipped with west
+
+    excluded = []
+    if without_fixes:
+        excluded += DEMONSTRATED_FIXES
+    if not force_full_speed:
+        excluded.append(FORCE_FULL_SPEED)
 
     patches_yml = REPO_ROOT / "project" / "zephyr" / "patches.yml"
     manifest = yaml.safe_load(patches_yml.read_text())
-    manifest["patches"] = [p for p in manifest["patches"] if p["path"] not in DEMONSTRATED_FIXES]
+    manifest["patches"] = [p for p in manifest["patches"] if p["path"] not in excluded]
     with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False) as filtered:
         yaml.safe_dump(manifest, filtered, sort_keys=False)
-    print(f"applying patches without {', '.join(DEMONSTRATED_FIXES)}", flush=True)
-    run(["west", "patch", "--patch-yml", filtered.name, "apply"])
+    if excluded:
+        print(f"applying patches without {', '.join(excluded)}", flush=True)
+    try:
+        run(["west", "patch", "--patch-yml", filtered.name, "apply"])
+    finally:
+        Path(filtered.name).unlink(missing_ok=True)
 
 
 def _fetch_blob_set(blobs: list[dict], blobs_root: Path, label: str) -> None:
@@ -182,6 +195,11 @@ def main() -> int:
         help="Apply the prerequisites only, leaving out the fixes this branch demonstrates",
     )
     parser.add_argument(
+        "--force-full-speed",
+        action="store_true",
+        help="Also apply the test patch limiting the USB controller to full speed",
+    )
+    parser.add_argument(
         "--no-blobs",
         action="store_true",
         help="Skip blob fetch (faster, BLE/WiFi firmware will be missing)",
@@ -192,7 +210,7 @@ def main() -> int:
 
     if not args.no_patch:
         reset_modules_to_clean_state()
-        apply_patches(args.without_fixes)
+        apply_patches(args.without_fixes, args.force_full_speed)
 
     if not args.no_blobs and not args.no_patch:
         fetch_blobs()

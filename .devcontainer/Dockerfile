@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y \
   libfreetype6 \
   libxext6 \
   libx11-xcb1 \
+  iputils-ping \
   && rm -rf /var/lib/apt/lists/* 
 
 RUN $PIP_INSTALL pyelftools
@@ -38,13 +39,13 @@ RUN $PIP_INSTALL cmake
 # Get the app-release-exec-linux se-tools from Alif
 RUN mkdir -p ${ALIF_SE_TOOLS} 
 RUN wget -q https://alifsemi.com/download/APFW0002 -O app-release-exec-linux.tar \
-    && tar xf app-release-exec-linux.tar \
-    && mv app-release-exec-linux/* ${ALIF_SE_TOOLS} \
-    && chmod -R 777 ${ALIF_SE_TOOLS}/build \
-    && chmod -R 777 ${ALIF_SE_TOOLS}/bin \
-    && chmod -R 777 ${ALIF_SE_TOOLS}/cert \
-    && chmod -R 777 ${ALIF_SE_TOOLS}/utils \
-    && rm app-release-exec-linux.tar
+  && tar xf app-release-exec-linux.tar \
+  && mv app-release-exec-linux/* ${ALIF_SE_TOOLS} \
+  && chmod -R 777 ${ALIF_SE_TOOLS}/build \
+  && chmod -R 777 ${ALIF_SE_TOOLS}/bin \
+  && chmod -R 777 ${ALIF_SE_TOOLS}/cert \
+  && chmod -R 777 ${ALIF_SE_TOOLS}/utils \
+  && rm app-release-exec-linux.tar
 
 # Set ttyACM0 as the default serial port for the Alif SE tools
 RUN printf "comport /dev/ttyACM0\ntimeout tx 2\ntimeout rx 0\nstopbits 1\nbytesize 8\nrtscts 0\nxonxoff 0\n" > ${ALIF_SE_TOOLS}/isp_config_data.cfg
