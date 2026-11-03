@@ -1,0 +1,177 @@
+diff --git a/drivers/spi/Kconfig.dw b/drivers/spi/Kconfig.dw
+index 0204b0276c5..992ea4d4c76 100644
+--- a/drivers/spi/Kconfig.dw
++++ b/drivers/spi/Kconfig.dw
+@@ -29,6 +29,19 @@ config SPI_DW_USE_DMA
+ 	  Eventhough the code path will be enabled by this, dma will be enabled
+ 	  based on the dts.
+ 
++config SPI_DW_DMA_RX_BOUNCE_SIZE
++	int "DMA RX bounce buffer size"
++	depends on SPI_DW_USE_DMA && DCACHE && CACHE_MANAGEMENT
++	range 1 65536
++	default 256
++	help
++	  Size in bytes of the bounce buffer of each instance with an rxdma
++	  channel, rounded up to a d-cache line. A receive buffer that does not
++	  start and end on d-cache lines cannot be invalidated without
++	  discarding writes to the data sharing its lines: the DMA writes to
++	  the bounce buffer instead, and the driver copies the data out. Longer
++	  transfers to such a buffer are split into several DMA transfers.
++
+ config SPI_DW_HSSI
+ 	bool "DesignWare SPI HSSI variant"
+ 	help
+diff --git a/drivers/spi/spi_dw.c b/drivers/spi/spi_dw.c
+index 43b29470534..6800bef2a3f 100644
+--- a/drivers/spi/spi_dw.c
++++ b/drivers/spi/spi_dw.c
+@@ -16,6 +16,7 @@
+ LOG_MODULE_REGISTER(spi_dw);
+ 
+ #include <errno.h>
++#include <string.h>
+ 
+ #include <zephyr/kernel.h>
+ #include <zephyr/arch/cpu.h>
+@@ -48,10 +49,23 @@ LOG_MODULE_REGISTER(spi_dw);
+ 
+ #ifdef CONFIG_SPI_DW_USE_DMA
+ #include <zephyr/drivers/dma.h>
++#include <zephyr/cache.h>
+ #define SPI_DW_DMA_FULL_DUPLEX 2
+ #define SPI_DW_DMA_SEMAPHORE_COUNT SPI_DW_DMA_FULL_DUPLEX
+ #endif
+ 
++#ifdef CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE
++#if defined(CONFIG_DCACHE_LINE_SIZE) && (CONFIG_DCACHE_LINE_SIZE > 0)
++#define SPI_DW_DCACHE_LINE_SIZE CONFIG_DCACHE_LINE_SIZE
++#else
++#define SPI_DW_DCACHE_LINE_SIZE DT_PROP_OR(DT_PATH(cpus, cpu_0), d_cache_line_size, 0)
++#endif
++BUILD_ASSERT(SPI_DW_DCACHE_LINE_SIZE > 0,
++	     "SPI DW DMA with the d-cache needs the d-cache line size at build time");
++#define SPI_DW_DMA_RX_BOUNCE_LEN \
++	ROUND_UP(CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE, SPI_DW_DCACHE_LINE_SIZE)
++#endif /* CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE */
++
+ static inline bool spi_dw_is_slave(struct spi_dw_data *spi)
+ {
+ 	return (IS_ENABLED(CONFIG_SPI_SLAVE) &&
+@@ -274,6 +288,18 @@ static bool spi_dw_dma_has_more_data(const struct spi_dw_dma_state *state)
+ 	return (state->tx_idx < state->tx_count) || (state->rx_idx < state->rx_count);
+ }
+ 
++#ifdef CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE
++/**
++ * Whether the DMA can write to a buffer directly: invalidating its range
++ * must not discard the latest writes to data sharing its d-cache lines.
++ */
++static bool spi_dw_dma_rx_is_line_aligned(const void *buf, size_t len)
++{
++	return IS_ALIGNED(buf, SPI_DW_DCACHE_LINE_SIZE) &&
++	       IS_ALIGNED(len, SPI_DW_DCACHE_LINE_SIZE);
++}
++#endif /* CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE */
++
+ /**
+  * Setup RX DMA channel for current chunk
+  */
+@@ -477,6 +503,29 @@ static int spi_dw_dma_transceive(const struct device *dev,
+ 		void *rx_ptr = (rxb && rxb->buf) ?
+ 					(uint8_t *)rxb->buf + state->rx_off : (uint8_t *)&dummy_rx;
+ 
++		bool rx_to_mem = info->dma_rx.enabled && state->is_rx_req &&
++				 rx_ptr != (void *)&dummy_rx;
++		void *dma_rx_ptr = rx_ptr;
++
++#ifdef CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE
++		/* A buffer sharing d-cache lines with other data receives through
++		 * the bounce buffer, then gets a copy of it.
++		 */
++		if (rx_to_mem && !spi_dw_dma_rx_is_line_aligned(rx_ptr, chunk * spi->dfs)) {
++			chunk = MIN(chunk, SPI_DW_DMA_RX_BOUNCE_LEN / spi->dfs);
++			dma_rx_ptr = info->dma_rx_bounce;
++		}
++#endif /* CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE */
++
++		/* The DMA engine reads and writes memory behind the CPU data cache */
++		if (info->dma_tx.enabled && state->is_tx_req) {
++			sys_cache_data_flush_range((void *)tx_ptr, (tx_ptr == (void *)&dummy_tx) ?
++						   sizeof(dummy_tx) : chunk * spi->dfs);
++		}
++		if (rx_to_mem) {
++			sys_cache_data_invd_range(dma_rx_ptr, chunk * spi->dfs);
++		}
++
+ 		/* Setup DMA for this chunk */
+ 		struct dma_config dma_cfg = { 0 };
+ 		struct dma_block_config dma_block_cfg = { 0 };
+@@ -491,7 +540,7 @@ static int spi_dw_dma_transceive(const struct device *dev,
+ 
+ 		if (info->dma_rx.enabled && state->is_rx_req) {
+ 			ret = spi_dw_dma_setup_rx_channel(dev, &dma_cfg,
+-							 &dma_block_cfg, rx_ptr, chunk);
++							 &dma_block_cfg, dma_rx_ptr, chunk);
+ 			if (ret < 0) {
+ 				goto dma_out;
+ 			}
+@@ -511,6 +560,14 @@ static int spi_dw_dma_transceive(const struct device *dev,
+ 			goto dma_out;
+ 		}
+ 
++		if (rx_to_mem) {
++			/* Drop lines the CPU may have prefetched while the DMA was writing */
++			sys_cache_data_invd_range(dma_rx_ptr, chunk * spi->dfs);
++			if (dma_rx_ptr != rx_ptr) {
++				memcpy(rx_ptr, dma_rx_ptr, chunk * spi->dfs);
++			}
++		}
++
+ 		state->tx_off += chunk * spi->dfs;
+ 		state->rx_off += chunk * spi->dfs;
+ 
+@@ -1167,7 +1224,21 @@ static int spi_dw_pm_action(const struct device *dev, enum pm_device_action acti
+ 			UTIL_OR(DT_INST_DMAS_HAS_NAME(inst, txdma),            \
+ 				DT_INST_DMAS_HAS_NAME(inst, rxdma))
+ 
++#ifdef CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE
++#define SPI_DW_DMA_RX_BOUNCE_DEFINE(inst)                                              \
++	IF_ENABLED(DT_INST_DMAS_HAS_NAME(inst, rxdma),                                 \
++		(static uint8_t spi_dw_dma_rx_bounce_##inst[SPI_DW_DMA_RX_BOUNCE_LEN]  \
++			__aligned(SPI_DW_DCACHE_LINE_SIZE);))
++#define SPI_DW_DMA_RX_BOUNCE_INIT(inst)                                                \
++	IF_ENABLED(DT_INST_DMAS_HAS_NAME(inst, rxdma),                                 \
++		(.dma_rx_bounce = spi_dw_dma_rx_bounce_##inst,))
++#else
++#define SPI_DW_DMA_RX_BOUNCE_DEFINE(inst)
++#define SPI_DW_DMA_RX_BOUNCE_INIT(inst)
++#endif /* CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE */
++
+ #define SPI_DW_DMA_INIT(inst)                                                          \
++	SPI_DW_DMA_RX_BOUNCE_INIT(inst)                                                \
+ 	IF_ENABLED(DT_INST_DMAS_HAS_NAME(inst, txdma),                                 \
+ 		(.dma_tx.enabled = 1,                                                  \
+ 		 .dma_tx.ch = DT_INST_DMAS_CELL_BY_NAME(inst, txdma, channel),         \
+@@ -1246,6 +1317,7 @@ COND_CODE_1(IS_EQ(DT_NUM_IRQS(DT_DRV_INST(inst)), 1),              \
+ 
+ #define SPI_DW_INIT(inst)                                                                   \
+ 	IF_ENABLED(CONFIG_PINCTRL, (PINCTRL_DT_INST_DEFINE(inst);))                         \
++	SPI_DW_DMA_RX_BOUNCE_DEFINE(inst)                                                   \
+ 	SPI_DW_IRQ_HANDLER(inst);                                                           \
+ 	static struct spi_dw_data spi_dw_data_##inst = {                                    \
+ 		SPI_CONTEXT_INIT_LOCK(spi_dw_data_##inst, ctx),                             \
+diff --git a/drivers/spi/spi_dw.h b/drivers/spi/spi_dw.h
+index dd393f97115..fd86e2689db 100644
+--- a/drivers/spi/spi_dw.h
++++ b/drivers/spi/spi_dw.h
+@@ -70,6 +70,9 @@ struct spi_dw_config {
+ 	const struct device *dma_dev;
+ 	const struct spi_dw_dma_ch dma_tx;
+ 	const struct spi_dw_dma_ch dma_rx;
++#ifdef CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE
++	uint8_t *dma_rx_bounce;	/* RX buffer aligned on d-cache lines */
++#endif
+ #endif /* CONFIG_SPI_DW_USE_DMA */
+ 	const struct device *clock_dev;
+ 	clock_control_subsys_t clock_subsys;

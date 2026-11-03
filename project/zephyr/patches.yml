@@ -1,0 +1,51 @@
+# Patches applied to west modules by `west patch apply` (see tools/scripts/update.py).
+#
+# The first one is a prerequisite, applied in every build: without it the CPU caches are off in
+# an application booted by MCUboot, and the defect does not show. The second one is the fix this
+# sample demonstrates; `update.py --without-fixes` leaves it out to reproduce the failure.
+patches:
+- path: zephyr/alif-ensemble-enable-caches-at-boot.patch
+  sha256sum: 6e03e1aef700ebe1d28c4a2c9c28ea50ca76fe3a4c97757185465de77e2357a9
+  module: zephyr
+  author: Nicolas Jenouvrier
+  email: nicolas.jenouvrier@pa.cotte.fr
+  date: 2026-10-30
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: on RTSS-HE and RTSS-HP, soc_reset_hook (startup.S) calls the
+    HAL SystemInit(), which enables the I-cache and D-cache in SCB->CCR.
+    reset.S then calls z_arm_init_arch_hw_at_boot() when
+    CONFIG_INIT_ARCH_HW_AT_BOOT is set, which MCUboot implies on every
+    chain-loaded image, and that function disables both caches. Nothing
+    enables them again.
+    FIX: enable both caches from soc_early_init_hook(). Demonstrated on the
+    cachesDisabledWithMcuboot branch of this repository.
+- path: zephyr/spi-dw-dma-cache-maintenance.patch
+  sha256sum: ea77ea1d4facf5c9f1fa6136297881da49fd6ae8b84b0936156b9419abbe7c79
+  module: zephyr
+  author: Nicolas Jenouvrier
+  email: nicolas.jenouvrier@pa.cotte.fr
+  date: 2026-10-30
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: with CONFIG_SPI_DW_USE_DMA, spi_dw hands the caller's buffers
+    straight to the DMA controller, which accesses memory behind the CPU
+    data cache. The driver does no cache maintenance, and dma_pl330 only
+    cleans its own microcode.
+    SYMPTOM: with the D-cache on, in a SPI loopback through DMA, every
+    transfer is corrupted. TX: the CPU's latest writes to the TX buffer are
+    still in the cache, so the DMA shifts out older bytes from SRAM. RX:
+    the CPU reads its own cached lines instead of what the DMA wrote. With
+    the D-cache off, or with the maintenance done by the caller, every
+    transfer is correct.
+    FIX: per chunk, clean the TX range (or the dummy TX word) before the
+    DMA starts. Invalidate the RX range before and after the DMA when it
+    starts and ends on d-cache lines. Any other RX buffer shares lines
+    with other data that an invalidation would discard: it receives
+    through a per-instance bounce buffer aligned on d-cache lines
+    (CONFIG_SPI_DW_DMA_RX_BOUNCE_SIZE, default 256 bytes, only for
+    instances with an rxdma channel), and the driver copies it out.
+    NOTE: transfers to an unaligned RX buffer longer than the bounce
+    buffer are split into several DMA transfers.

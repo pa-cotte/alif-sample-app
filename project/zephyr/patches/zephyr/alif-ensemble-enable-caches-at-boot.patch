@@ -1,0 +1,54 @@
+diff --git a/soc/alif/ensemble/Kconfig b/soc/alif/ensemble/Kconfig
+index 98fe4ab6745..21cad7c0082 100644
+--- a/soc/alif/ensemble/Kconfig
++++ b/soc/alif/ensemble/Kconfig
+@@ -21,6 +21,7 @@ config RTSS_HE
+ 	select CPU_HAS_FPU
+ 	select CPU_HAS_CUSTOM_FIXED_SOC_MPU_REGIONS
+ 	select SOC_RESET_HOOK
++	select SOC_EARLY_INIT_HOOK
+ 	select BUILTIN_STACK_GUARD
+ 	select PINCTRL
+ 	select CLOCK_CONTROL
+@@ -43,6 +44,7 @@ config RTSS_HP
+ 	select CPU_HAS_FPU
+ 	select CPU_HAS_CUSTOM_FIXED_SOC_MPU_REGIONS
+ 	select SOC_RESET_HOOK
++	select SOC_EARLY_INIT_HOOK
+ 	select BUILTIN_STACK_GUARD
+ 	select PINCTRL
+ 	select CLOCK_CONTROL
+diff --git a/soc/alif/ensemble/common/soc_common.c b/soc/alif/ensemble/common/soc_common.c
+index beeb9731b4b..92ee7380caf 100644
+--- a/soc/alif/ensemble/common/soc_common.c
++++ b/soc/alif/ensemble/common/soc_common.c
+@@ -5,6 +5,7 @@
+ 
+ #include <zephyr/init.h>
+ #include <zephyr/arch/cpu.h>
++#include <zephyr/cache.h>
+ #include <soc_common.h>
+ #include <zephyr/dt-bindings/dma/alif_dma_event_router.h>
+ #if IS_ENABLED(CONFIG_PM)
+@@ -225,6 +226,21 @@ static void soc_configure_he_dma_sel_lpspi(void)
+ #endif /* CONFIG_SOC_SERIES_E1C */
+ #endif /* CONFIG_RTSS_HE */
+ 
++#if defined(CONFIG_SOC_EARLY_INIT_HOOK)
++/**
++ * @brief Enable the CPU caches.
++ *        SystemInit() enables them from soc_reset_hook, but
++ *        z_arm_init_arch_hw_at_boot() (CONFIG_INIT_ARCH_HW_AT_BOOT, implied by
++ *        MCUboot) runs afterwards and disables them, and nothing else
++ *        enables them again.
++ */
++void soc_early_init_hook(void)
++{
++	sys_cache_instr_enable();
++	sys_cache_data_enable();
++}
++#endif /* CONFIG_SOC_EARLY_INIT_HOOK */
++
+ /**
+  * @brief Perform common SoC initialization at boot
+  *        for ensemble family.

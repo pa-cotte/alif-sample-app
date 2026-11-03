@@ -1,0 +1,23 @@
+#include <zephyr/dt-bindings/dma/alif_dma_event_router.h>
+
+/* SPI1 in internal loopback (SPI_MODE_LOOP) through DMA: nothing to wire. Only MOSI is muxed. */
+&pinctrl_spi1 {
+	group0 {
+		pinmux = <PIN_P8_4__SPI1_MOSI_B>;
+	};
+};
+
+&spi1 {
+	status = "okay";
+	/* DMA0 group 2: SPI1 TX is peripheral request 21, SPI1 RX request 17 (E7 HWRM, DMA0 requests mapping) */
+	dmas = <&evtrtr0 ALIF_DMA_ENCODE(1, 2, 1) 21>, <&evtrtr0 ALIF_DMA_ENCODE(2, 2, 1) 17>;
+	dma-names = "txdma", "rxdma";
+};
+
+&dma0 {
+	status = "okay";
+};
+
+&evtrtr0 {
+	status = "okay";
+};
