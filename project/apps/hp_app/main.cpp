@@ -8,6 +8,12 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(RED_LED_NODE, gpios);
 
 LOG_MODULE_REGISTER(app);
 
+#include "../common/cache_report.hpp"
+
+// Each core copies in its own region: both are cacheable, and the two images never share them.
+static uint8_t g_copySrc[4096] __attribute__((section(".alif_sram1")));
+static uint8_t g_copyDst[4096] __attribute__((section(".alif_sram1")));
+
 auto main() -> int
 {
   int ret;
@@ -25,8 +31,13 @@ auto main() -> int
     return 0;
   }
 
-  while (true)
+  for (unsigned blink = 0;; blink++)
   {
+    // At boot, then every 5 s for a console opened late.
+    if (blink % 10 == 0)
+    {
+      reportCaches("SRAM1", g_copySrc, g_copyDst);
+    }
     LOG_INF("Blink from HP!");
     ret = gpio_pin_toggle_dt(&led);
     if (ret < 0)

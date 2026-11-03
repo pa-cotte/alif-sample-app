@@ -1,0 +1,30 @@
+# Patches applied to west modules by `west patch apply` (see tools/scripts/update.py).
+#
+# The patch below is the fix this sample demonstrates; `update.py --without-fixes` leaves it out to
+# reproduce the failure.
+patches:
+- path: zephyr/alif-ensemble-enable-caches-at-boot.patch
+  sha256sum: 6e03e1aef700ebe1d28c4a2c9c28ea50ca76fe3a4c97757185465de77e2357a9
+  module: zephyr
+  author: Nicolas Jenouvrier
+  email: nicolas.jenouvrier@pa.cotte.fr
+  date: 2026-10-30
+  upstreamable: true
+  apply-command: git apply
+  comments: |
+    CONTEXT: on RTSS-HE and RTSS-HP, soc_reset_hook (startup.S) calls the
+    HAL SystemInit(), which enables the I-cache and D-cache in SCB->CCR.
+    reset.S then calls z_arm_init_arch_hw_at_boot() when
+    CONFIG_INIT_ARCH_HW_AT_BOOT is set, which MCUboot implies on every
+    chain-loaded image, and that function disables both caches. The Alif
+    SoC has no soc_early_init_hook and arch_cache_init() is empty on
+    Cortex-M, so nothing enables them again.
+    SYMPTOM: an application booted by MCUboot runs on both cores with the
+    SCB->CCR DC and IC bits cleared, despite CONFIG_DCACHE=y and
+    CONFIG_ICACHE=y. Code executes from MRAM and data lives in SRAM without
+    any cache. The same application without MCUboot runs with both caches.
+    FIX: select SOC_EARLY_INIT_HOOK on RTSS_HE and RTSS_HP and enable both
+    caches from soc_early_init_hook(), as the STM32N6 SoC does. The hook
+    runs after INIT_LEVEL_EARLY and before PRE_KERNEL_1, so every driver
+    initialises with the caches on.
+    NOTE: Balletto has the same reset path and is not covered here.
